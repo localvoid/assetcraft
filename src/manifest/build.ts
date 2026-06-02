@@ -17,8 +17,8 @@ export class ManifestBuilder {
   readonly indexByURL: Map<string, ManifestEntry>;
   /** Logical name → entry index (a single entry may have multiple names). */
   readonly indexByName: Map<string, ManifestEntry>;
-  /** Filename → entry index for dedup and reference by build output name. */
-  readonly indexByFileName: Map<string, ManifestEntry>;
+  /** File path → entry index for dedup and reference by build output name. */
+  readonly indexByPath: Map<string, ManifestEntry>;
   /** Previous build's entries keyed by fileName, used for content-hash reuse. */
   readonly prev: Map<string, ManifestEntry>;
   /** Immutable-asset history tracker shared across builds. */
@@ -33,13 +33,13 @@ export class ManifestBuilder {
     this.external = [];
     this.indexByURL = new Map();
     this.indexByName = new Map();
-    this.indexByFileName = new Map();
+    this.indexByPath = new Map();
     this.prev = new Map();
     this.history = new AssetsHistory(history);
 
     if (prev) {
       for (const entry of prev) {
-        this.prev.set(entry.fileName, entry);
+        this.prev.set(entry.path, entry);
       }
     }
   }
@@ -57,14 +57,14 @@ export class ManifestBuilder {
 
   /**
    * Add a manifest entry to the current build.
-   * If a previous entry with the same fileName has an identical SHA-256 hash,
+   * If a previous entry with the same path has an identical SHA-256 hash,
    * the previous entry is reused (avoids rewriting unchanged assets).
    * Immutable assets are recorded in {@link history}.
    * @returns Index of the entry in {@link entries}.
    */
   add(entry: ManifestEntry): number {
     const flags = entry.flags;
-    const prev = this.prev.get(entry.fileName);
+    const prev = this.prev.get(entry.path);
     if (prev !== void 0) {
       if (prev.sha256 === entry.sha256) {
         entry = prev;
@@ -79,15 +79,15 @@ export class ManifestBuilder {
   }
 
   /**
-   * Look up a previous-build entry by fileName and optionally transform it
+   * Look up a previous-build entry by path and optionally transform it
    * before adding it to the current build. Throws if the entry doesn't exist.
    * Immutable assets are recorded in {@link history}.
    * @returns Index of the entry in {@link entries}.
    */
-  updateByFileName(fileName: string, fn?: (entry: ManifestEntry) => ManifestEntry): number {
-    let entry = this.prev.get(fileName);
+  updateByPath(path: string, fn?: (entry: ManifestEntry) => ManifestEntry): number {
+    let entry = this.prev.get(path);
     if (entry === void 0) {
-      throw new Error(`Missing asset with a fileName '${fileName}'`);
+      throw new Error(`Missing asset '${path}'`);
     }
     if (fn !== void 0) {
       entry = fn(entry);
@@ -104,9 +104,9 @@ export class ManifestBuilder {
     return this.indexByName.get(name);
   }
 
-  /** Look up an entry by its hashed filename on disk. */
-  getByFileName(fileName: string): ManifestEntry | undefined {
-    return this.indexByFileName.get(fileName);
+  /** Look up an entry by its hashed path on disk. */
+  getByPath(path: string): ManifestEntry | undefined {
+    return this.indexByPath.get(path);
   }
 
   /** Look up an entry by its public URL. */
@@ -115,8 +115,8 @@ export class ManifestBuilder {
   }
 
   /**
-   * Register an entry in all lookup indices (URL, fileName, name).
-   * Throws on duplicate fileName or duplicate name.
+   * Register an entry in all lookup indices (URL, path, name).
+   * Throws on duplicate path or duplicate name.
    */
   #indexEntry(entry: ManifestEntry) {
     if (entry.name) {
@@ -128,10 +128,10 @@ export class ManifestBuilder {
         this.#indexByName(entry.name, entry);
       }
     }
-    if (this.indexByFileName.has(entry.fileName)) {
-      throw Error(`Manifest entry with a fileName '${entry.fileName}' already exists`);
+    if (this.indexByPath.has(entry.path)) {
+      throw Error(`Manifest entry with a path '${entry.path}' already exists`);
     }
-    this.indexByFileName.set(entry.fileName, entry);
+    this.indexByPath.set(entry.path, entry);
     this.indexByURL.set(urlToString(entry.url), entry);
   }
 

@@ -47,8 +47,8 @@ export interface ManifestBaseEntry<T extends ManifestEntryType> {
   flags: number;
   // Public URL to serve the asset
   url: string | { origin: string; path: string };
-  // Filename on disk after content hashing
-  fileName: string;
+  // File path on disk
+  path: string;
   // SHA-256 hash of the content (base64url-encoded)
   sha256: string;
   // (optional) Logical name(s) for lookup by build tools
@@ -106,7 +106,7 @@ builder.add({
   mime: 'application/javascript',
   flags: MANIFEST_ASSET_IMMUTABLE,
   url: `/assets/${uniqueFileName('app.js', hash)}`,
-  fileName: 'pub/app.js',
+  path: 'pub/app.js',
   sha256: hash,
   headers: {
     Link: '</assets/dep.js>; rel=modulepreload',

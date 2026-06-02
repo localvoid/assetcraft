@@ -28,8 +28,8 @@ export interface ManifestBaseEntry<T extends ManifestEntryType> {
   flags: number;
   /** Public URL used to serve the asset. */
   url: string | { origin: string; path: string };
-  /** Filename on disk after content hashing. */
-  fileName: string;
+  /** File path on disk. */
+  path: string;
   /** SHA-256 hash of the asset content (base64url-encoded). */
   sha256: string;
   /** Logical name(s) for lookup by build tools. */
@@ -41,23 +41,14 @@ export interface ManifestBaseEntry<T extends ManifestEntryType> {
 }
 
 export interface ManifestJSEntry extends ManifestBaseEntry<'js'> {}
-
 export interface ManifestWASMEntry extends ManifestBaseEntry<'wasm'> {}
-
 export interface ManifestHTMLEntry extends ManifestBaseEntry<'html'> {}
-
 export interface ManifestCSSEntry extends ManifestBaseEntry<'css'> {}
-
 export interface ManifestFontEntry extends ManifestBaseEntry<'font'> {}
-
 export interface ManifestImageEntry extends ManifestBaseEntry<'image'> {}
-
 export interface ManifestAudioEntry extends ManifestBaseEntry<'audio'> {}
-
 export interface ManifestVideoEntry extends ManifestBaseEntry<'video'> {}
-
 export interface ManifestMiscEntry extends ManifestBaseEntry<'misc'> {}
-
 export interface ManifestSourceMapEntry extends ManifestBaseEntry<'sourcemap'> {}
 
 /** Compression-dictionary entry used for Brotli/DC web-ready compression hints. */
