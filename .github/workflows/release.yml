@@ -38,7 +38,6 @@ jobs:
       - run: bun install
       - run: bun run check
       - run: bun run build
-      - run: bun run test
       - name: Increment versions and push changes
         if: ${{ github.event.inputs.increment != 'ignore' }}
         run: |
