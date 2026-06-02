@@ -1,0 +1,45 @@
+{
+  "name": "assetcraft",
+  "version": "0.1.0",
+  "description": "Web Assets Toolkit",
+  "keywords": [],
+  "homepage": "https://github.com/localvoid/assetcraft",
+  "bugs": "https://github.com/localvoid/assetcraft/issues",
+  "license": "(MIT OR Apache-2.0)",
+  "author": "Boris Kaul <localvoid@gmail.com> (https://github.com/localvoid)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/localvoid/assetcraft.git"
+  },
+  "files": [
+    "dist",
+    "src",
+    "!dist/**/*.tsbuildinfo",
+    "!dist/**/__tests__",
+    "!src/**/__tests__",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    "./manifest": "./dist/manifest.js",
+    "./manifest/build": "./dist/manifest/build.js",
+    "./history": "./dist/history.js",
+    "./file": "./dist/file.js",
+    "./compress": "./dist/compress.js"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "format": "oxfmt",
+    "check": "oxlint",
+    "clean": "rm -rf tsconfig.tsbuildinfo ./dist ./node_modules"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "oxfmt": "0.53.0",
+    "oxlint": "1.68.0",
+    "oxlint-tsgolint": "0.23.0",
+    "typescript": "^6.0.3"
+  }
+}
