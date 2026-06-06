@@ -27,5 +27,5 @@
     ]
   },
   "sortPackageJson": true,
-  "ignorePatterns": ["bun.lock", "dist/**"]
+  "ignorePatterns": ["dist/**"]
 }

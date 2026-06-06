@@ -38,5 +38,5 @@
     "node": true
   },
   "globals": {},
-  "ignorePatterns": ["bun.lock", "*.tsbuildinfo", "dist/**"]
+  "ignorePatterns": ["dist/**"]
 }
