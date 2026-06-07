@@ -2,15 +2,16 @@
 
 TypeScript library for managing static web assets.
 
-## Package Structure
+## File Structure
 
 ```
+README.md
 src/
   manifest.ts   # Manifest types, constants, and `importManifests` helper
   manifest/
     build.ts    # ManifestBuilder
-    history.ts  # AssetsHistory
   file.ts       # FileSystem utils
+  history.ts    # AssetsHistory
   compress.ts   # Compression utils
 ```
 
