@@ -5,7 +5,7 @@
 
 import { hash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
-import { dirname, extname, resolve } from 'node:path';
+import { dirname, extname, resolve, sep } from 'node:path';
 
 /** Compute a URL-safe SHA-256 hash of the given content. */
 export function calculateHash(code: string | Uint8Array): string {
@@ -47,7 +47,11 @@ export async function updateFile(
     if (c.equals(content)) {
       return false;
     }
-  } catch {}
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+      throw error;
+    }
+  }
 
   await fs.writeFile(path, content);
   return true;
@@ -56,10 +60,12 @@ export async function updateFile(
 /**
  * Remove all files in `dir`, optionally skipping entries in `ignore`.
  * Non-recursive: only top-level files are deleted.
+ * Symbolic links are removed themselves (never followed).
+ * @throws If `dir` doesn't exist or isn't readable.
  */
 export async function cleanDir(dir: string, ignore?: Set<string>): Promise<void> {
   for (const file of await fs.readdir(dir, { withFileTypes: true })) {
-    if (file.isFile()) {
+    if (file.isFile() || file.isSymbolicLink()) {
       if (ignore?.has(file.name)) {
         continue;
       }
@@ -78,6 +84,10 @@ const SPLIT_FIRST_DIR_RE = /(.+?)[\\/](.+)/;
  * Recursively remove files from `dir`, respecting a list of paths to keep.
  * Paths in `ignore` can be nested (e.g. "sub/dir/file.txt") — the
  * function walks into subdirectories only when needed.
+ * `ignore` entries must be relative paths; anything else never matches.
+ * Symbolic links are removed themselves (never followed).
+ * @throws If `dir` doesn't exist or isn't readable, or if an `ignore`
+ *   path descends into something that isn't a directory.
  */
 export async function cleanDirRecursive(dir: string, ignore?: string[]): Promise<void> {
   const skipInDir = new Set<string>();
@@ -125,10 +135,12 @@ export function pathWithTrailingSlash(path: string): string {
 
 /** Check whether `path` is located within `parent` (resolved absolute). */
 export function pathIsWithin(parent: string, path: string): boolean {
-  return resolve(path).startsWith(resolve(parent));
+  const p = resolve(parent);
+  const r = resolve(path);
+  return r === p || r.startsWith(p.endsWith(sep) ? p : p + sep);
 }
 
-/** Format a byte count into a human-readable string (B, KB, MB). */
+/** Format a byte count into a human-readable string (B, KB, MB, GB, TB, PB). */
 export function formatFileSize(i: number): string {
   if (i < 1024) {
     return `${i}B`;
@@ -138,7 +150,11 @@ export function formatFileSize(i: number): string {
     return `${i.toFixed(2)}KB`;
   }
   i /= 1024;
-  return `${i.toFixed(2)}MB`;
+  if (i < 1024) {
+    return `${i.toFixed(2)}MB`;
+  }
+  i /= 1024;
+  return `${i.toFixed(2)}GB`;
 }
 
 const RECURSIVE = { recursive: true };
