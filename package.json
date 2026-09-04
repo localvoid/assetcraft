@@ -23,9 +23,13 @@
   "exports": {
     "./manifest": "./dist/manifest.js",
     "./manifest/build": "./dist/manifest/build.js",
+    "./manifest/diff": "./dist/manifest/diff.js",
+    "./manifest/prune": "./dist/manifest/prune.js",
+    "./manifest/validate": "./dist/manifest/validate.js",
     "./history": "./dist/history.js",
     "./file": "./dist/file.js",
-    "./compress": "./dist/compress.js"
+    "./compress": "./dist/compress.js",
+    "./http": "./dist/http.js"
   },
   "scripts": {
     "build": "tsc -b",

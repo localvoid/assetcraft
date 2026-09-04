@@ -1,5 +1,5 @@
 import type { AssetsHistoryEntry } from '../history.js';
-import type { Manifest, ManifestEntry } from '../manifest.js';
+import type { Manifest, ManifestEntry, ManifestEntryType } from '../manifest.js';
 import { AssetsHistory } from '../history.js';
 import { MANIFEST_ASSET_IMMUTABLE } from '../manifest.js';
 
@@ -87,6 +87,37 @@ export class ManifestBuilder {
   }
 
   /**
+   * Add a manifest entry to the current build, or replace the existing
+   * entry with the same path. Replacement keeps the original position in
+   * {@link entries}. Name and URL collisions with *other* entries throw,
+   * leaving the existing entry untouched.
+   * Immutable assets are recorded in {@link history}.
+   * @returns Index of the entry in {@link entries}.
+   */
+  upsert(entry: ManifestEntry): number {
+    const existing = this.indexByPath.get(entry.path);
+    if (existing === void 0) {
+      return this.add(entry);
+    }
+    if (existing === entry) {
+      return this.entries.indexOf(entry);
+    }
+    this.#assertLocalAvailable(entry, existing);
+    // add to history
+    if (entry.flags & MANIFEST_ASSET_IMMUTABLE) {
+      this.history.add(urlToString(entry.url), entry.sha256);
+    }
+    this.#unindexLocal(existing);
+    this.#indexLocal(entry);
+    const pos = this.entries.indexOf(existing);
+    if (pos === -1) {
+      return this.entries.push(entry) - 1;
+    }
+    this.entries[pos] = entry;
+    return pos;
+  }
+
+  /**
    * Look up a previous-build entry by path and optionally transform it
    * before adding it to the current build. Throws if the entry doesn't exist.
    * Immutable assets are recorded in {@link history}.
@@ -123,6 +154,46 @@ export class ManifestBuilder {
   }
 
   /**
+   * List all entries tagged with `tag`, in build order followed by
+   * external manifests. Local entries shadow external ones with the
+   * same path.
+   */
+  getByTag(tag: string): ManifestEntry[] {
+    const result: ManifestEntry[] = [];
+    for (const entry of this.entries) {
+      if (entry.tags?.includes(tag)) {
+        result.push(entry);
+      }
+    }
+    for (const entry of this.#unshadowedExternal()) {
+      if (entry.tags?.includes(tag)) {
+        result.push(entry);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * List all entries of a given type, in build order followed by
+   * external manifests. Local entries shadow external ones with the
+   * same path.
+   */
+  listByType(type: ManifestEntryType): ManifestEntry[] {
+    const result: ManifestEntry[] = [];
+    for (const entry of this.entries) {
+      if (entry.type === type) {
+        result.push(entry);
+      }
+    }
+    for (const entry of this.#unshadowedExternal()) {
+      if (entry.type === type) {
+        result.push(entry);
+      }
+    }
+    return result;
+  }
+
+  /**
    * Register a current-build entry in all local lookup indices
    * (URL, path, name). Throws on duplicate path, duplicate name,
    * or URL conflict with different content.
@@ -150,6 +221,60 @@ export class ManifestBuilder {
       throw Error(`Manifest entry with a name '${name}' already exists`);
     }
     this.indexByName.set(name, entry);
+  }
+
+  /**
+   * Check that `entry` can be indexed without colliding with entries
+   * other than `ignore`. Used by {@link upsert} to fail before mutating
+   * any index, leaving the existing entry untouched on error.
+   */
+  #assertLocalAvailable(entry: ManifestEntry, ignore: ManifestEntry) {
+    if (entry.name !== undefined) {
+      const names = Array.isArray(entry.name) ? entry.name : [entry.name];
+      for (const n of names) {
+        const mapped = this.indexByName.get(n);
+        if (mapped !== undefined && mapped !== ignore) {
+          throw Error(`Manifest entry with a name '${n}' already exists`);
+        }
+      }
+    }
+    const url = urlToString(entry.url);
+    const mapped = this.indexByURL.get(url);
+    if (mapped !== undefined && mapped !== ignore && mapped.sha256 !== entry.sha256) {
+      throw Error(`Manifest entry with a url '${url}' already exists with a different hash`);
+    }
+  }
+
+  /** Remove an entry from all local lookup indices (guarded by identity). */
+  #unindexLocal(entry: ManifestEntry) {
+    if (entry.name !== undefined) {
+      const names = Array.isArray(entry.name) ? entry.name : [entry.name];
+      for (const n of names) {
+        if (this.indexByName.get(n) === entry) {
+          this.indexByName.delete(n);
+        }
+      }
+    }
+    if (this.indexByPath.get(entry.path) === entry) {
+      this.indexByPath.delete(entry.path);
+    }
+    const url = urlToString(entry.url);
+    if (this.indexByURL.get(url) === entry) {
+      this.indexByURL.delete(url);
+    }
+  }
+
+  /** All external entries not shadowed by a local entry with the same path. */
+  #unshadowedExternal(): ManifestEntry[] {
+    const result: ManifestEntry[] = [];
+    for (const manifest of this.external) {
+      for (const entry of manifest) {
+        if (!this.indexByPath.has(entry.path)) {
+          result.push(entry);
+        }
+      }
+    }
+    return result;
   }
 
   /**

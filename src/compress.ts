@@ -16,7 +16,7 @@ export interface CompressAssetOptions {
 
 /** A single compressed variant of an asset. */
 export interface CompressEntry {
-  readonly format: 'gzip' | 'brotli' | 'zstd';
+  readonly format: 'gzip' | 'br' | 'zstd';
   readonly content: Buffer;
 }
 
@@ -47,7 +47,7 @@ export function* compressAsset(
     },
   });
   if (brotli.length < sizeThreshold) {
-    yield { format: 'brotli', content: brotli };
+    yield { format: 'br', content: brotli };
   }
 
   const zstd = zstdCompressSync(content, {
