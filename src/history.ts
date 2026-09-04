@@ -31,7 +31,7 @@ export class AssetsHistory {
     this.active = new Set();
     if (entries) {
       for (const entry of entries) {
-        this.index.set(entry.url, entry);
+        this.index.set(entry.url, { ...entry });
       }
     }
   }
