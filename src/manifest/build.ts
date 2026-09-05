@@ -1,7 +1,6 @@
 import type { AssetsHistoryEntry } from '../history.js';
 import type { Manifest, ManifestEntry, ManifestEntryType } from '../manifest.js';
 import { AssetsHistory } from '../history.js';
-import { MANIFEST_ASSET_IMMUTABLE } from '../manifest.js';
 
 /**
  * ManifestBuilder — accumulates manifest entries during a build,
@@ -79,7 +78,7 @@ export class ManifestBuilder {
    */
   add(entry: ManifestEntry): number {
     // add to history
-    if (entry.flags & MANIFEST_ASSET_IMMUTABLE) {
+    if (entry.immutable === true) {
       this.history.add(urlToString(entry.url), entry.sha256);
     }
     this.#indexLocal(entry);
@@ -104,7 +103,7 @@ export class ManifestBuilder {
     }
     this.#assertLocalAvailable(entry, existing);
     // add to history
-    if (entry.flags & MANIFEST_ASSET_IMMUTABLE) {
+    if (entry.immutable === true) {
       this.history.add(urlToString(entry.url), entry.sha256);
     }
     this.#unindexLocal(existing);
@@ -131,7 +130,7 @@ export class ManifestBuilder {
     if (fn !== void 0) {
       entry = fn(entry);
     }
-    if (entry.flags & MANIFEST_ASSET_IMMUTABLE) {
+    if (entry.immutable === true) {
       this.history.add(urlToString(entry.url), entry.sha256);
     }
     this.#indexLocal(entry);

@@ -9,10 +9,11 @@ function mkEntry(path: string): ManifestEntry {
   return {
     type: 'js',
     mime: 'application/javascript',
-    flags: 1,
+    immutable: true,
     url: `/assets/${path}`,
     path,
     sha256: 'abc',
+    size: 3,
   };
 }
 
@@ -134,6 +135,21 @@ describe('pruneDir', () => {
       await pruneDir(dir, [mkEntry('app-hash.js')], { compressedSuffixes: ['.br', '.gz'] });
       expect(await pathExists(join(dir, 'app-hash.js'))).toBe(true);
       expect(await pathExists(join(dir, 'app-hash.js.br'))).toBe(true);
+      expect(await pathExists(join(dir, 'old.js'))).toBe(false);
+    });
+  });
+
+  test('keeps explicit entry.compressed paths without suffix options', async () => {
+    await withTempDir(async (dir) => {
+      await writeFiles(dir, {
+        'app-hash.js': 'app',
+        'app-hash.js.zst': 'zst',
+        'old.js': 'old',
+      });
+      const entry = mkEntry('app-hash.js');
+      entry.compressed = { zstd: { path: 'app-hash.js.zst', size: 3, sha256: 'abc' } };
+      await pruneDir(dir, [entry]);
+      expect(await pathExists(join(dir, 'app-hash.js.zst'))).toBe(true);
       expect(await pathExists(join(dir, 'old.js'))).toBe(false);
     });
   });

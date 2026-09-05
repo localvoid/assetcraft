@@ -29,9 +29,11 @@ export type ManifestEntryType =
   | 'css'
   | 'font'
   | 'image'
+  | 'svg'
   | 'audio'
   | 'video'
-  | 'misc'
+  | 'text'
+  | 'binary'
   | 'sourcemap'
   | 'compression-dictionary';
 
@@ -39,53 +41,79 @@ export type ManifestEntryType =
  * A common set of properties for all manifest entries.
  */
 export interface ManifestBaseEntry<T extends ManifestEntryType> {
-  // "js" | "wasm" | "html" | "css" | "font" | "image" | "audio" | "video" | "misc" | "sourcemap" | "compression-dictionary"
+  // "js" | "wasm" | "html" | "css" | "font" | "image" | "svg" | ... (see above)
   type: ManifestEntryType;
   // MIME type string, e.g. "application/javascript"
   mime: string;
-  // Bitfield: MANIFEST_ASSET_IMMUTABLE | MANIFEST_ASSET_COMPRESSED_BROTLI | ...
-  flags: number;
+  // Immutable asset; its URL will never serve different content
+  immutable?: boolean;
   // Public URL to serve the asset
   url: string | { origin: string; path: string };
   // File path on disk
   path: string;
   // SHA-256 hash of the content (base64url-encoded)
   sha256: string;
+  // Uncompressed size in bytes (Content-Length, budgets, diff summaries)
+  size: number;
   // (optional) Logical name(s) for lookup by build tools
   name?: string | string[];
   // (optional) Arbitrary tags for filtering or grouping
   tags?: string[];
   // (optional) Extra HTTP headers to attach when serving
   headers?: Record<string, string>;
+  // (optional) Subresource Integrity string, e.g. "sha384-…"
+  integrity?: string;
+  // (optional) Compressed variants: { br/zstd/gzip: { path, size, sha256? } }
+  compressed?: ManifestCompressedVariants;
+  // (optional) HTML hints: crossorigin, fetchPriority, preload
+  crossorigin?: 'anonymous' | 'use-credentials';
+  fetchPriority?: 'high' | 'low' | 'auto';
+  preload?: boolean;
 }
 
-export interface ManifestJSEntry extends ManifestBaseEntry<'js'> {}
-export interface ManifestWASMEntry extends ManifestBaseEntry<'wasm'> {}
-export interface ManifestHTMLEntry extends ManifestBaseEntry<'html'> {}
-export interface ManifestCSSEntry extends ManifestBaseEntry<'css'> {}
-export interface ManifestFontEntry extends ManifestBaseEntry<'font'> {}
-export interface ManifestImageEntry extends ManifestBaseEntry<'image'> {}
-export interface ManifestAudioEntry extends ManifestBaseEntry<'audio'> {}
-export interface ManifestVideoEntry extends ManifestBaseEntry<'video'> {}
-export interface ManifestMiscEntry extends ManifestBaseEntry<'misc'> {}
-export interface ManifestSourceMapEntry extends ManifestBaseEntry<'sourcemap'> {}
-interface ManifestCompressionDictionaryEntry extends ManifestBaseEntry<'compression-dictionary'> {
-  // Substring match pattern for the dictionary
-  match: string;
-  // (optional) Destination URL for the compressed variant
-  matchDest?: string;
+// Per-type media metadata and HTML hints, e.g. JS module/deps,
+// image dimensions/srcset, font descriptors, video duration/poster.
+export interface ManifestJSEntry extends ManifestBaseEntry<'js'> {
+  module?: 'esm' | 'script';
+  entry?: boolean;
+  async?: boolean;
+  defer?: boolean;
+  deps?: string[];
 }
+export interface ManifestImageEntry extends ManifestBaseEntry<'image'> {
+  width?: number;
+  height?: number;
+  srcset?: ManifestImageCandidate[];
+  loading?: 'lazy' | 'eager';
+  decoding?: 'async' | 'sync' | 'auto';
+}
+// ... ManifestSVGEntry, ManifestTextEntry, ManifestBinaryEntry, etc.
 
-export type ManifestEntry = ManifestJSEntry | ManifestWASMEntry; /* | ... */
+export type ManifestEntry = ManifestJSEntry | ManifestImageEntry; /* | ... */
 ```
 
-**Flags**:
+Immutable assets (`immutable: true`) get a long-lived immutable `Cache-Control` directive; mutable ones must revalidate. Compressed variants are tracked per format in `entry.compressed` (`{ br/zstd/gzip: { path, size, sha256? } }`).
+
+### Build a manifest entry
 
 ```ts
-const MANIFEST_ASSET_IMMUTABLE = 1; // URL will never serve different content
-const MANIFEST_ASSET_COMPRESSED_BROTLI = 2; // Brotli-compressed variant on disk
-const MANIFEST_ASSET_COMPRESSED_ZSTD = 4; // Zstandard-compressed variant on disk
-const MANIFEST_ASSET_COMPRESSED_GZIP = 8; // gzip-compressed variant on disk
+import { createManifestEntry } from 'assetcraft/manifest/entry';
+import { ManifestBuilder } from 'assetcraft/manifest/build';
+
+const builder = new ManifestBuilder(prevManifest, prevHistory);
+
+// Hashes content, derives hashed names/URLs, computes SRI, optionally compresses.
+const { entry, variants } = await createManifestEntry({
+  type: 'js',
+  mime: 'application/javascript',
+  content: code,
+  path: 'assets/app.js',
+  name: 'app',
+  compress: true,
+  extra: { module: 'esm', entry: true, deps: ['/assets/dep-a1b2.js'] },
+});
+builder.add(entry);
+// Write variants.br/.zstd/.gzip to entry.compressed.*.path
 ```
 
 ### Build a manifest
@@ -94,7 +122,6 @@ const MANIFEST_ASSET_COMPRESSED_GZIP = 8; // gzip-compressed variant on disk
 import { readFile } from 'node:fs/promises';
 import { ManifestBuilder } from 'assetcraft/manifest/build';
 import { calculateHash, uniqueFileName } from 'assetcraft/file';
-import { MANIFEST_ASSET_IMMUTABLE } from 'assetcraft/manifest';
 
 const builder = new ManifestBuilder(prevManifest, prevHistory);
 
@@ -104,14 +131,18 @@ builder.add({
   name: 'app',
   type: 'js',
   mime: 'application/javascript',
-  flags: MANIFEST_ASSET_IMMUTABLE,
+  immutable: true,
   url: `/assets/${uniqueFileName('app.js', hash)}`,
   path: 'pub/app.js',
   sha256: hash,
+  size: Buffer.byteLength(code),
   headers: {
     Link: '</assets/dep.js>; rel=modulepreload',
   },
 });
+// Tip: createManifestEntry (above) does the hashing, sizing, naming,
+// integrity, and compression steps for you, and `deps` replaces the
+// hand-written Link header.
 ```
 
 ### Compress assets

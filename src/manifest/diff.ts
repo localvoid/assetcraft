@@ -60,6 +60,29 @@ export function diffManifests(prev: Manifest, next: Manifest): ManifestDiff {
 }
 
 /**
+ * Base-entry keys compared explicitly. Every other key is type-specific
+ * media metadata or hints and is compared generically, so new per-type
+ * fields are covered without updating this function.
+ */
+const BASE_KEYS: ReadonlySet<string> = new Set([
+  'type',
+  'mime',
+  'immutable',
+  'path',
+  'sha256',
+  'size',
+  'url',
+  'name',
+  'tags',
+  'headers',
+  'integrity',
+  'compressed',
+  'crossorigin',
+  'fetchPriority',
+  'preload',
+]);
+
+/**
  * Check whether two manifest entries carry equal metadata. A `false`
  * result is always safe (treat entries as different); it just forgoes
  * reference-stability optimizations.
@@ -71,23 +94,40 @@ export function isEqualManifestEntry(a: ManifestEntry, b: ManifestEntry): boolea
   if (
     a.type !== b.type ||
     a.mime !== b.mime ||
-    a.flags !== b.flags ||
+    a.immutable !== b.immutable ||
     a.path !== b.path ||
     a.sha256 !== b.sha256 ||
+    a.size !== b.size ||
+    a.integrity !== b.integrity ||
+    a.crossorigin !== b.crossorigin ||
+    a.fetchPriority !== b.fetchPriority ||
+    a.preload !== b.preload ||
     urlToString(a.url) !== urlToString(b.url) ||
     !isEqualJsonValue(a.name, b.name) ||
     !isEqualJsonValue(a.tags, b.tags) ||
-    !isEqualJsonValue(a.headers, b.headers)
+    !isEqualJsonValue(a.headers, b.headers) ||
+    !isEqualJsonValue(a.compressed, b.compressed)
   ) {
     return false;
   }
-  if (a.type === 'compression-dictionary' && b.type === 'compression-dictionary') {
-    return a.match === b.match && a.matchDest === b.matchDest;
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const key of keys) {
+    if (BASE_KEYS.has(key)) {
+      continue;
+    }
+    if (
+      !isEqualJsonValue(
+        (a as unknown as Record<string, unknown>)[key],
+        (b as unknown as Record<string, unknown>)[key],
+      )
+    ) {
+      return false;
+    }
   }
   return true;
 }
 
-/** Compare optional JSON-like metadata (`name`, `tags`, `headers`). */
+/** Compare optional JSON-like metadata (`name`, `tags`, `headers`, …). */
 function isEqualJsonValue(a: unknown, b: unknown): boolean {
   if (a === b) {
     return true;

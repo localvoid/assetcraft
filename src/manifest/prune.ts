@@ -49,6 +49,13 @@ export function collectManifestPaths(
     for (const entry of manifest) {
       const path = normalizeKeepPath(dir, entry.path);
       keep.add(path);
+      // Explicit variant paths recorded in `entry.compressed`…
+      for (const variant of Object.values(entry.compressed ?? {})) {
+        if (variant !== undefined) {
+          keep.add(normalizeKeepPath(dir, variant.path));
+        }
+      }
+      // …plus suffix-convention variants for untracked on-disk files.
       if (options?.compressedSuffixes !== undefined) {
         for (const suffix of options.compressedSuffixes) {
           // Suffixes contain no separators, so the combination stays within
