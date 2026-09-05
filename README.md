@@ -76,7 +76,7 @@ interface ManifestCompressionDictionaryEntry extends ManifestBaseEntry<'compress
   matchDest?: string;
 }
 
-export type ManifestEntry = ManifestJSEntry | ManifestWASMEntry /* | ... */;
+export type ManifestEntry = ManifestJSEntry | ManifestWASMEntry; /* | ... */
 ```
 
 **Flags**:
@@ -117,12 +117,16 @@ builder.add({
 ### Compress assets
 
 ```ts
-import { compressAsset } from 'assetcraft/compress';
+import { compressAsset, compressAssetSync } from 'assetcraft/compress';
 
-for (const variant of compressAsset(content, { sizeMin: 512, sizeMinDiffRatio: 0.1 })) {
-  // variant.format: 'brotli' | 'zstd' | 'gzip'
-  // variant.content: Buffer
+// Async (parallel): result only contains variants meeting the savings threshold.
+const result = await compressAsset(content, { sizeMin: 512, sizeMinDiffRatio: 0.1 });
+for (const [format, data] of Object.entries(result)) {
+  // format: 'br' | 'zstd' | 'gzip', data: Buffer
 }
+
+// Sync version:
+const syncResult = compressAssetSync(content);
 ```
 
 ### Track immutable asset URLs

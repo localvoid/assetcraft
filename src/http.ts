@@ -3,7 +3,7 @@
  * encodings for compressed variants, and response header assembly.
  */
 
-import type { CompressEntry } from './compress.js';
+import type { CompressFormat } from './compress.js';
 import type { ManifestEntry } from './manifest.js';
 import { MANIFEST_ASSET_IMMUTABLE } from './manifest.js';
 
@@ -34,7 +34,7 @@ export interface ResponseHeadersOptions {
   /** Cache-Control header. Default: true */
   readonly cacheControl?: boolean;
   /** Compression format of the variant being served (adds Content-Encoding + Vary). */
-  readonly encoding?: CompressEntry['format'];
+  readonly encoding?: CompressFormat;
 }
 
 /**
