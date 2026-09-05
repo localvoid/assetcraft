@@ -5,7 +5,7 @@
 
 import { hash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
-import { dirname, extname, resolve, sep } from 'node:path';
+import { dirname, extname, isAbsolute, join, posix, resolve, sep, win32 } from 'node:path';
 
 /** Compute a URL-safe SHA-256 hash of the given content. */
 export function calculateHash(code: string | Uint8Array): string {
@@ -75,54 +75,163 @@ export async function cleanDir(dir: string, ignore?: Set<string>): Promise<void>
 }
 
 /**
- * Regex that splits a relative path into its first directory segment and
- * the remainder (e.g. "a/b/c" → ["a", "b/c"]).
+ * Options for {@link cleanDirRecursive}.
  */
-const SPLIT_FIRST_DIR_RE = /(.+?)[\\/](.+)/;
+export interface CleanDirRecursiveOptions {
+  /**
+   * Remove directories that become empty after pruning (default `false`).
+   * The root `dir` itself is never removed, and directories that exactly
+   * match an `ignore` entry are never removed.
+   */
+  readonly removeEmptyDirs?: boolean;
+}
 
 /**
  * Recursively remove files from `dir`, respecting a list of paths to keep.
- * Paths in `ignore` can be nested (e.g. "sub/dir/file.txt") — the
- * function walks into subdirectories only when needed.
- * `ignore` entries must be relative paths; anything else never matches.
+ * Paths in `ignore` must be normalized relative paths using `/` separators
+ * (e.g. "sub/dir/file.txt") — the function walks into subdirectories only
+ * when needed. A trailing `/` (e.g. "sub/") keeps the whole subtree.
+ * An `ignore` entry that exactly matches a name keeps whatever is at that
+ * name (file, symlink, or entire directory tree). A nested entry
+ * (e.g. "sub/keep.txt") only descends into `sub` when it is a real
+ * directory; a file or symlink at `sub` is stale and is removed.
+ * Anything else (empty, absolute, or starting with `.`/`..`) never matches.
  * Symbolic links are removed themselves (never followed).
- * @throws If `dir` doesn't exist or isn't readable, or if an `ignore`
- *   path descends into something that isn't a directory.
+ * @throws If `dir` doesn't exist or isn't readable.
  */
-export async function cleanDirRecursive(dir: string, ignore?: string[]): Promise<void> {
-  const skipInDir = new Set<string>();
-  let nested: Map<string, string[]> | null = null;
-  if (ignore?.length) {
-    for (const file of ignore) {
-      if (dirname(file) !== '.') {
-        const matched = SPLIT_FIRST_DIR_RE.exec(file);
-        if (matched) {
-          nested ??= new Map();
-          const [, nestedDir, skipPath] = matched;
-          let nestedSkip = nested.get(nestedDir);
-          if (!nestedSkip) {
-            nestedSkip = [];
-            nested.set(nestedDir, nestedSkip);
-          }
-          if (!nestedSkip.includes(skipPath)) {
-            nestedSkip.push(skipPath);
-          }
-        }
-      } else {
-        skipInDir.add(file);
-      }
-    }
-  }
-  for (const file of await fs.readdir(dir)) {
-    if (skipInDir.has(file)) {
+export async function cleanDirRecursive(
+  dir: string,
+  ignore?: string[],
+  options?: CleanDirRecursiveOptions,
+): Promise<void> {
+  await cleanTree(dir, ignore?.length ? buildKeepTree(ignore) : null, options);
+}
+
+/** A node in the keep-trie built from `ignore` paths. */
+interface KeepNode {
+  /**
+   * An entry ends here: keep whatever is at this name (file, symlink, or
+   * entire directory tree) without descending further.
+   */
+  keepWhole: boolean;
+  /** Keeps nested below this name, keyed by the next segment. */
+  children: Map<string, KeepNode>;
+}
+
+/**
+ * Build a keep-trie from `ignore` paths, splitting each path into segments
+ * only once. Entries that can never match (empty, absolute, or escaping
+ * with `..`) are dropped.
+ */
+function buildKeepTree(ignore: string[]): Map<string, KeepNode> {
+  const root = new Map<string, KeepNode>();
+  for (const file of ignore) {
+    const segments = splitKeepSegments(file);
+    if (segments === null) {
       continue;
     }
-    if (nested?.has(file)) {
-      await cleanDirRecursive(resolve(dir, file), nested.get(file));
-    } else {
-      await fs.rm(resolve(dir, file), RECURSIVE_FORCE);
+    let level = root;
+    for (let i = 0; i < segments.length; i++) {
+      let node = level.get(segments[i]);
+      if (!node) {
+        node = { keepWhole: false, children: new Map() };
+        level.set(segments[i], node);
+      }
+      if (i === segments.length - 1) {
+        node.keepWhole = true;
+      } else if (node.keepWhole) {
+        // An ancestor already keeps the whole subtree; deeper segments
+        // are redundant.
+        break;
+      }
+      level = node.children;
     }
   }
+  return root;
+}
+
+/**
+ * Clean `dir`, keeping whatever `keep` describes.
+ * @returns `true` when `dir` holds no entries afterwards.
+ */
+async function cleanTree(
+  dir: string,
+  keep: Map<string, KeepNode> | null,
+  options?: CleanDirRecursiveOptions,
+): Promise<boolean> {
+  let empty = true;
+  for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+    const name = entry.name;
+    const child = join(dir, name);
+    const node = keep?.get(name);
+    if (node === undefined) {
+      await fs.rm(child, RECURSIVE_FORCE);
+      continue;
+    }
+    if (node.keepWhole) {
+      empty = false;
+      continue;
+    }
+    if (!entry.isDirectory() || entry.isSymbolicLink()) {
+      // A file or symlink blocks a nested keep path, so it is stale.
+      await fs.rm(child, RECURSIVE_FORCE);
+      continue;
+    }
+    if ((await cleanTree(child, node.children, options)) && options?.removeEmptyDirs === true) {
+      await fs.rmdir(child);
+    } else {
+      empty = false;
+    }
+  }
+  return empty;
+}
+
+/**
+ * Why a relative path is unusable as a keep path: empty input (`empty`),
+ * an absolute path (`absolute`), the directory itself (`.`, `empty` after
+ * normalization, e.g. `a/..`; `self`), or something escaping it
+ * (`..`, `../x`; `escape`).
+ */
+export type InvalidKeepPathReason = 'empty' | 'absolute' | 'self' | 'escape';
+
+/**
+ * Normalize an output-relative keep path to a canonical posix form.
+ * Accepts `./`, duplicate `/`, and `inner/../` segments; `\` is treated as
+ * a separator on Windows only (on posix it is a valid filename character).
+ * A trailing `/` is stripped (keeping `sub/` as `sub`).
+ * Pure: no filesystem access, no throwing — inspect `reason` instead.
+ */
+export function normalizeRelativePath(
+  path: string,
+): { ok: true; path: string } | { ok: false; reason: InvalidKeepPathReason } {
+  if (path === '') {
+    return { ok: false, reason: 'empty' };
+  }
+  if (isAbsolute(path) || posix.isAbsolute(path) || win32.isAbsolute(path)) {
+    return { ok: false, reason: 'absolute' };
+  }
+  const normalized = posix.normalize(sep === '/' ? path : path.replace(/\\/g, '/'));
+  const stripped = normalized.endsWith('/') ? normalized.slice(0, -1) : normalized;
+  if (stripped === '.' || stripped === '') {
+    return { ok: false, reason: 'self' };
+  }
+  if (stripped === '..' || stripped.startsWith('../') || stripped.startsWith('/')) {
+    return { ok: false, reason: 'escape' };
+  }
+  return { ok: true, path: stripped };
+}
+
+/**
+ * Split a keep path into segments (e.g. "a/b/c" → ["a", "b", "c"]).
+ * Returns `null` for entries that can never match a directory entry
+ * (empty, absolute, self-referencing, or escaping with `..`).
+ */
+function splitKeepSegments(path: string): string[] | null {
+  const normalized = normalizeRelativePath(path);
+  if (!normalized.ok) {
+    return null;
+  }
+  return normalized.path.split('/');
 }
 
 /** Ensure `path` ends with a trailing slash. */
