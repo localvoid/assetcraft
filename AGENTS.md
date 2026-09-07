@@ -13,8 +13,12 @@ src/
     diff.ts     # diffManifests, isEqualManifestEntry
     prune.ts    # pruneDir, collectManifestPaths
     validate.ts # validate/parse manifest entries
+  deploy.ts
+  deploy/
+    files.ts    # DeployFile, listDeployFiles, planDeploy
+    history.ts  # DeployHistory, checkManifest, recordHistory
+    state.ts    # DeployState (.deploy.json), checkDeploy
   file.ts       # FileSystem utils
-  history.ts    # AssetsHistory
   compress.ts   # Compression utils
   http.ts       # Cache-Control / response header helpers
 ```

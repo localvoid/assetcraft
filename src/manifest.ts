@@ -206,6 +206,15 @@ export type Manifest = ManifestEntry[];
 /** Helpers section */
 
 /**
+ * Normalize a manifest public URL to string form. Object URLs
+ * (`{ origin, path }`) are scoped by origin, so `origin + path` is a
+ * collision-safe key.
+ */
+export function urlToString(url: ManifestEntry['url']): string {
+  return typeof url === 'string' ? url : url.origin + url.path;
+}
+
+/**
  * Dynamically import one or more JSON manifest files.
  */
 export async function importManifests(

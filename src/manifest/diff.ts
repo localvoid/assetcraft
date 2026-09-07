@@ -5,6 +5,7 @@
  */
 
 import type { Manifest, ManifestEntry } from '../manifest.js';
+import { urlToString } from '../manifest.js';
 
 /** A single entry that exists in both manifests with differences. */
 export interface ManifestChangedEntry {
@@ -136,12 +137,4 @@ function isEqualJsonValue(a: unknown, b: unknown): boolean {
     return false;
   }
   return JSON.stringify(a) === JSON.stringify(b);
-}
-
-/** Normalize a public URL to string form for comparison. */
-function urlToString(url: string | { origin: string; path: string }): string {
-  if (typeof url === 'string') {
-    return url;
-  }
-  return url.origin + url.path;
 }

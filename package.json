@@ -27,7 +27,7 @@
     "./manifest/entry": "./dist/manifest/entry.js",
     "./manifest/prune": "./dist/manifest/prune.js",
     "./manifest/validate": "./dist/manifest/validate.js",
-    "./history": "./dist/history.js",
+    "./deploy": "./dist/deploy.js",
     "./file": "./dist/file.js",
     "./compress": "./dist/compress.js",
     "./http": "./dist/http.js"
@@ -36,6 +36,7 @@
     "build": "tsc -b",
     "format": "oxfmt",
     "check": "oxlint",
+    "test": "bun test tests/",
     "clean": "rm -rf tsconfig.tsbuildinfo ./dist ./node_modules"
   },
   "devDependencies": {

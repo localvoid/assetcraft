@@ -1,11 +1,9 @@
-import type { AssetsHistoryEntry } from '../history.js';
 import type { Manifest, ManifestEntry, ManifestEntryType } from '../manifest.js';
-import { AssetsHistory } from '../history.js';
+import { urlToString } from '../manifest.js';
 
 /**
- * ManifestBuilder — accumulates manifest entries during a build,
- * maintains lookup indices, and integrates with AssetsHistory to
- * prevent URL collisions for immutable assets.
+ * ManifestBuilder — accumulates manifest entries during a build and
+ * maintains lookup indices.
  */
 export class ManifestBuilder {
   /** All entries added to this build, in insertion order. */
@@ -30,14 +28,11 @@ export class ManifestBuilder {
   readonly externalByPath: Map<string, ManifestEntry>;
   /** Previous build's entries keyed by fileName, used for content-hash reuse. */
   readonly prev: Map<string, ManifestEntry>;
-  /** Immutable-asset history tracker shared across builds. */
-  readonly history: AssetsHistory;
 
   /**
    * @param prev - Manifest from the previous build (for content-hash matching).
-   * @param history - History entries from the prior build cycle.
    */
-  constructor(prev?: Manifest, history?: AssetsHistoryEntry[]) {
+  constructor(prev?: Manifest) {
     this.entries = [];
     this.external = [];
     this.indexByURL = new Map();
@@ -47,7 +42,6 @@ export class ManifestBuilder {
     this.externalByName = new Map();
     this.externalByPath = new Map();
     this.prev = new Map();
-    this.history = new AssetsHistory(history);
 
     if (prev) {
       for (const entry of prev) {
@@ -73,14 +67,9 @@ export class ManifestBuilder {
 
   /**
    * Add a manifest entry to the current build.
-   * Immutable assets are recorded in {@link history}.
    * @returns Index of the entry in {@link entries}.
    */
   add(entry: ManifestEntry): number {
-    // add to history
-    if (entry.immutable === true) {
-      this.history.add(urlToString(entry.url), entry.sha256);
-    }
     this.#indexLocal(entry);
     return this.entries.push(entry) - 1;
   }
@@ -90,7 +79,6 @@ export class ManifestBuilder {
    * entry with the same path. Replacement keeps the original position in
    * {@link entries}. Name and URL collisions with *other* entries throw,
    * leaving the existing entry untouched.
-   * Immutable assets are recorded in {@link history}.
    * @returns Index of the entry in {@link entries}.
    */
   upsert(entry: ManifestEntry): number {
@@ -102,10 +90,6 @@ export class ManifestBuilder {
       return this.entries.indexOf(entry);
     }
     this.#assertLocalAvailable(entry, existing);
-    // add to history
-    if (entry.immutable === true) {
-      this.history.add(urlToString(entry.url), entry.sha256);
-    }
     this.#unindexLocal(existing);
     this.#indexLocal(entry);
     const pos = this.entries.indexOf(existing);
@@ -119,7 +103,6 @@ export class ManifestBuilder {
   /**
    * Look up a previous-build entry by path and optionally transform it
    * before adding it to the current build. Throws if the entry doesn't exist.
-   * Immutable assets are recorded in {@link history}.
    * @returns Index of the entry in {@link entries}.
    */
   updateByPath(path: string, fn?: (entry: ManifestEntry) => ManifestEntry): number {
@@ -129,9 +112,6 @@ export class ManifestBuilder {
     }
     if (fn !== void 0) {
       entry = fn(entry);
-    }
-    if (entry.immutable === true) {
-      this.history.add(urlToString(entry.url), entry.sha256);
     }
     this.#indexLocal(entry);
     return this.entries.push(entry) - 1;
@@ -321,11 +301,4 @@ export class ManifestBuilder {
     }
     this.externalByURL.set(url, entry);
   }
-}
-
-function urlToString(url: string | { origin: string; path: string }): string {
-  if (typeof url === 'string') {
-    return url;
-  }
-  return url.origin + url.path;
 }

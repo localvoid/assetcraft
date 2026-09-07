@@ -160,15 +160,29 @@ for (const [format, data] of Object.entries(result)) {
 const syncResult = compressAssetSync(content);
 ```
 
-### Track immutable asset URLs
+### Deploy (history, plan, state)
 
 ```ts
-import { AssetsHistory } from 'assetcraft/history';
+import {
+  checkDeploy,
+  loadDeployState,
+  planDeploy,
+  recordHistory,
+  saveDeployState,
+} from 'assetcraft/deploy';
 
-const history = AssetsHistory.fromString(persisted);
-history.add(url, sha256);
-history.purge();
-await writeFile('history.json', history.serialize());
+// Validate the new manifest against persisted deploy state:
+// throws on immutable URL reuse with different content.
+const { manifest, state } = await checkDeploy('dist/manifest.json', 'dist/manifest.deploy.json');
+
+// Plan upload/removal against the previous manifest.
+const plan = planDeploy(prevManifest, manifest, state?.pending);
+
+// Persist updated history + pending removals for the next cycle.
+await saveDeployState('dist/manifest.deploy.json', {
+  history: recordHistory(manifest, state?.history),
+  pending: plan.pending,
+});
 ```
 
 ## License

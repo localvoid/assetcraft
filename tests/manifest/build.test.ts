@@ -66,16 +66,6 @@ describe('ManifestBuilder add', () => {
     expect(b.getByURL('https://cdn.example/assets/app.js')).toBe(e);
   });
 
-  test('records immutable assets in history, ignores mutable ones', () => {
-    const b = new ManifestBuilder();
-    const imm = mkEntry({ path: 'a.js', sha256: 'aaa', immutable: true });
-    const mut = mkEntry({ path: 'b.js', sha256: 'bbb' });
-    b.add(imm);
-    b.add(mut);
-    expect(b.history.active.has('/assets/a.js')).toBe(true);
-    expect(b.history.active.has('/assets/b.js')).toBe(false);
-  });
-
   test('throws on duplicate path', () => {
     const b = new ManifestBuilder();
     b.add(mkEntry({ path: 'a.js', sha256: 'aaa' }));
@@ -114,14 +104,6 @@ describe('ManifestBuilder add', () => {
     const second = mkEntry({ path: 'b.js', sha256: 'aaa', url: '/same.js' });
     expect(() => b.add(second)).not.toThrow();
     expect(b.getByURL('/same.js')).toBe(second);
-  });
-
-  test('throws history collision for immutable url reuse with different hash', () => {
-    const b = new ManifestBuilder();
-    b.add(mkEntry({ path: 'a.js', sha256: 'aaa', url: '/app.js', immutable: true }));
-    expect(() =>
-      b.add(mkEntry({ path: 'b.js', sha256: 'bbb', url: '/app.js', immutable: true })),
-    ).toThrow();
   });
 });
 
@@ -266,23 +248,6 @@ describe('ManifestBuilder updateByPath', () => {
     const idx = b.updateByPath('a.js', (e) => ({ ...e, sha256: 'zzz' }));
     expect(idx).toBe(0);
     expect(b.entries[0]?.sha256).toBe('zzz');
-  });
-
-  test('records immutable prev entries in history', () => {
-    const prev = mkEntry({
-      path: 'a.js',
-      sha256: 'aaa',
-      url: '/a.js',
-      immutable: true,
-    });
-    const b = new ManifestBuilder([prev]);
-    b.updateByPath('a.js');
-    expect(b.history.active.has('/a.js')).toBe(true);
-  });
-
-  test('seeds history from constructor entries', () => {
-    const b = new ManifestBuilder([], [{ url: '/old.js', hash: 'hhh' }]);
-    expect(b.history.index.get('/old.js')).toEqual({ url: '/old.js', hash: 'hhh' });
   });
 });
 
