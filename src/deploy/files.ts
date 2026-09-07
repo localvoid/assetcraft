@@ -151,11 +151,11 @@ export interface PlanDeployOptions extends ListDeployFilesOptions {
 
 export interface DeployPlan {
   /** New or content-changed files to upload (identity + variants). */
-  readonly upload: DeployFile[];
+  readonly add: DeployFile[];
   /** Files absent long enough to delete now (identity + variants). */
-  readonly removeNow: DeployFile[];
+  readonly remove: DeployFile[];
   /** Pending state to persist for the next deploy cycle. */
-  readonly pending: PendingRemoval[];
+  readonly pendingRemove: PendingRemoval[];
   /** Entries identical in both manifests (kept as-is). */
   readonly unchanged: number;
 }
@@ -183,9 +183,9 @@ export function planDeploy(
   const includeExternal = options?.includeExternal ?? false;
   if (prev === void 0) {
     return {
-      upload: next.flatMap((entry) => expandEntry(entry, includeExternal)),
-      removeNow: [],
-      pending: [],
+      add: next.flatMap((entry) => expandEntry(entry, includeExternal)),
+      remove: [],
+      pendingRemove: [],
       unchanged: 0,
     };
   }
@@ -199,7 +199,7 @@ export function planDeploy(
       uploadPaths.add(c.next.path);
     }
   }
-  const upload = next.flatMap((entry) =>
+  const add = next.flatMap((entry) =>
     uploadPaths.has(entry.path) ? expandEntry(entry, includeExternal) : [],
   );
 
@@ -211,8 +211,8 @@ export function planDeploy(
   for (const entry of diff.removed) {
     candidates.add(entry.path);
   }
-  const removeNow: DeployFile[] = [];
-  const nextPending: PendingRemoval[] = [];
+  const remove: DeployFile[] = [];
+  const pendingRemove: PendingRemoval[] = [];
   for (const path of candidates) {
     if (nextPaths.has(path)) {
       continue;
@@ -223,10 +223,15 @@ export function planDeploy(
     }
     const absences = (prevAbsences.get(path) ?? 0) + 1;
     if (absences >= keepDeploys) {
-      removeNow.push(...expandEntry(entry, includeExternal));
+      remove.push(...expandEntry(entry, includeExternal));
     } else {
-      nextPending.push({ path, url: urlToString(entry.url), absences });
+      pendingRemove.push({ path, url: urlToString(entry.url), absences });
     }
   }
-  return { upload, removeNow, pending: nextPending, unchanged: diff.unchanged.length };
+  return {
+    add,
+    remove,
+    pendingRemove,
+    unchanged: diff.unchanged.length,
+  };
 }

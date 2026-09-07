@@ -3,9 +3,9 @@
 TypeScript toolkit for managing static web assets.
 
 - **Manifest** — Structured metadata for different asset types (JS, CSS, images, fonts, etc.)
-- **Assets History** — Prevents URL collisions across builds for immutable assets.
 - **Compression** — Brotli, Zstandard, and gzip variant generation with configurable thresholds.
 - **File Utilities** — Misc file helpers.
+- **Deploy Helpers** — Assets history tracking to prevent URL collisions for immutable assets, version skew protection.
 
 ## Installation
 
@@ -100,7 +100,7 @@ Immutable assets (`immutable: true`) get a long-lived immutable `Cache-Control` 
 import { createManifestEntry } from 'assetcraft/manifest/entry';
 import { ManifestBuilder } from 'assetcraft/manifest/build';
 
-const builder = new ManifestBuilder(prevManifest, prevHistory);
+const builder = new ManifestBuilder(prevManifest);
 
 // Hashes content, derives hashed names/URLs, computes SRI, optionally compresses.
 const { entry, variants } = await createManifestEntry({
@@ -123,7 +123,7 @@ import { readFile } from 'node:fs/promises';
 import { ManifestBuilder } from 'assetcraft/manifest/build';
 import { calculateHash, uniqueFileName } from 'assetcraft/file';
 
-const builder = new ManifestBuilder(prevManifest, prevHistory);
+const builder = new ManifestBuilder(prevManifest);
 
 const code = await readFile('dist/app.js', 'utf8');
 const hash = calculateHash(code);

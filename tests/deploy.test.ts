@@ -261,9 +261,9 @@ test('readDeployBytes reads resolved file bytes', async () => {
 test('planDeploy uploads everything on first deploy', () => {
   const next: Manifest = [jsEntry('/s/a.js', 'dist/a.js', 'hash1')];
   const plan = planDeploy(void 0, next);
-  equal(plan.upload.length, 1);
-  equal(plan.removeNow.length, 0);
-  equal(plan.pending.length, 0);
+  equal(plan.add.length, 1);
+  equal(plan.remove.length, 0);
+  equal(plan.pendingRemove.length, 0);
   equal(plan.unchanged, 0);
 });
 
@@ -278,7 +278,7 @@ test('planDeploy uploads added + hash-changed, keeps metadata-only', () => {
     jsEntry('/s/c.js', 'dist/c.js', 'hashC'),
   ];
   const plan = planDeploy(prev, next);
-  deepEqual(plan.upload.map((f) => f.url).sort(), ['/s/a.js', '/s/c.js']);
+  deepEqual(plan.add.map((f) => f.url).sort(), ['/s/a.js', '/s/c.js']);
   equal(plan.unchanged, 0);
 });
 
@@ -288,28 +288,28 @@ test('planDeploy holds removals for keepDeploys then deletes', () => {
   const next: Manifest = [jsEntry('/s/a.js', 'dist/a.js', 'hash1')];
 
   const first = planDeploy(prev, next);
-  equal(first.removeNow.length, 0);
-  deepEqual(first.pending, [{ path: 'dist/old.js', url: '/s/old.js', absences: 1 }]);
+  equal(first.remove.length, 0);
+  deepEqual(first.pendingRemove, [{ path: 'dist/old.js', url: '/s/old.js', absences: 1 }]);
 
-  const second = planDeploy(prev, next, first.pending);
+  const second = planDeploy(prev, next, first.pendingRemove);
   deepEqual(
-    second.removeNow.map((f) => f.url),
+    second.remove.map((f) => f.url),
     ['/s/old.js'],
   );
-  equal(second.pending.length, 0);
+  equal(second.pendingRemove.length, 0);
 });
 
 test('planDeploy with keepDeploys: 1 deletes immediately, : 3 waits', () => {
   const prev: Manifest = [jsEntry('/s/old.js', 'dist/old.js', 'hashOld')];
   const next: Manifest = [];
-  equal(planDeploy(prev, next, void 0, { keepDeploys: 1 }).removeNow.length, 1);
+  equal(planDeploy(prev, next, void 0, { keepDeploys: 1 }).remove.length, 1);
   const held = planDeploy(prev, next, void 0, { keepDeploys: 3 });
-  equal(held.removeNow.length, 0);
-  deepEqual(held.pending, [{ path: 'dist/old.js', url: '/s/old.js', absences: 1 }]);
-  const again = planDeploy(prev, next, held.pending, { keepDeploys: 3 });
-  equal(again.removeNow.length, 0);
-  deepEqual(again.pending, [{ path: 'dist/old.js', url: '/s/old.js', absences: 2 }]);
-  equal(planDeploy(prev, next, again.pending, { keepDeploys: 3 }).removeNow.length, 1);
+  equal(held.remove.length, 0);
+  deepEqual(held.pendingRemove, [{ path: 'dist/old.js', url: '/s/old.js', absences: 1 }]);
+  const again = planDeploy(prev, next, held.pendingRemove, { keepDeploys: 3 });
+  equal(again.remove.length, 0);
+  deepEqual(again.pendingRemove, [{ path: 'dist/old.js', url: '/s/old.js', absences: 2 }]);
+  equal(planDeploy(prev, next, again.pendingRemove, { keepDeploys: 3 }).remove.length, 1);
 });
 
 test('planDeploy clears pending when the path reappears', () => {
@@ -317,8 +317,8 @@ test('planDeploy clears pending when the path reappears', () => {
   const prev: Manifest = [entry];
   const pending = [{ path: 'dist/old.js', url: '/s/old.js', absences: 1 }];
   const plan = planDeploy(prev, [entry], pending);
-  equal(plan.pending.length, 0);
-  equal(plan.removeNow.length, 0);
+  equal(plan.pendingRemove.length, 0);
+  equal(plan.remove.length, 0);
   equal(plan.unchanged, 1);
 });
 
@@ -333,7 +333,7 @@ test('planDeploy removeNow includes variant rows with the parent', () => {
     compressed: { br: { path: 'dist/old.js.br', size: 4, sha256: 'brhash' } },
   });
   const plan = planDeploy([oldEntry], [], void 0, { keepDeploys: 1 });
-  deepEqual(plan.removeNow.map((f) => f.url).sort(), ['/s/old.js', '/s/old.js.br']);
+  deepEqual(plan.remove.map((f) => f.url).sort(), ['/s/old.js', '/s/old.js.br']);
 });
 
 test('planDeploy skips external removals unless includeExternal', () => {
@@ -343,10 +343,10 @@ test('planDeploy skips external removals unless includeExternal', () => {
     'hashX',
   );
   const plan = planDeploy([external], [], void 0, { keepDeploys: 1 });
-  equal(plan.removeNow.length, 0);
+  equal(plan.remove.length, 0);
   const included = planDeploy([external], [], void 0, { keepDeploys: 1, includeExternal: true });
   deepEqual(
-    included.removeNow.map((f) => f.url),
+    included.remove.map((f) => f.url),
     ['https://cdn.example/s/x.js'],
   );
 });
