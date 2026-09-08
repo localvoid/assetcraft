@@ -163,27 +163,27 @@ const syncResult = compressAssetSync(content);
 ### Deploy (history, plan, state)
 
 ```ts
-import {
-  checkDeploy,
-  loadDeployState,
-  planDeploy,
-  recordHistory,
-  saveDeployState,
-} from 'assetcraft/deploy';
+import { Deploy } from 'assetcraft/deploy';
 
-// Validate the new manifest against persisted deploy state:
-// throws on immutable URL reuse with different content.
-const { manifest, state } = await checkDeploy('dist/manifest.json', 'dist/manifest.deploy.json');
-
-// Plan upload/removal against the previous manifest.
-const plan = planDeploy(prevManifest, manifest, state?.pending);
-
-// Persist updated history + pending removals for the next cycle.
-await saveDeployState('dist/manifest.deploy.json', {
-  history: recordHistory(manifest, state?.history),
-  pending: plan.pending,
+// Load the manifests + deploy state, throwing on immutable URL reuse
+// with different content. One manifest path per build tool; previous
+// manifests are read back from the deploy state, so callers never
+// handle them directly.
+const deploy = await Deploy.open({
+  manifests: ['dist/html-manifest.json', 'dist/js-manifest.json'],
+  deployPath: 'dist/manifest.deploy.json',
 });
+
+// Plan upload/removal against the previous snapshots.
+const plan = deploy.plan();
+// …upload plan.add, delete plan.remove…
+
+// Persist updated history, pending removals, and manifest snapshots
+// for the next cycle.
+await deploy.commit();
 ```
+
+Each manifest's entry paths resolve against its own directory. Files are keyed by manifest + path, so different manifests may use the same relative path; public URLs share one global history namespace.
 
 ## License
 
