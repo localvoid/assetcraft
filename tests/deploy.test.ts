@@ -509,7 +509,7 @@ test('plan clears pending when the path reappears', async () => {
     JSON.stringify({
       history: [],
       pending: [{ source: manifestPath, path: 'dist/old.js', url: '/s/old.js', absences: 1 }],
-      prevManifests: [{ source: manifestPath, dir: dir, entries: [entry] }],
+      prevManifests: [{ source: manifestPath, dir: dir.path, entries: [entry] }],
     }),
   );
   const deploy = await Deploy.open({ manifests: [manifestPath], deployPath });
@@ -548,7 +548,7 @@ test('commit updates in-memory state for subsequent plans', async () => {
     JSON.stringify({
       history: [],
       pending: [{ source: manifestPath, path: 'dist/old.js', url: '/s/old.js', absences: 1 }],
-      prevManifests: [{ source: manifestPath, dir, entries: [...next, oldEntry] }],
+      prevManifests: [{ source: manifestPath, dir: dir.path, entries: [...next, oldEntry] }],
     }),
   );
   const deploy = await Deploy.open({ manifests: [manifestPath], deployPath });
