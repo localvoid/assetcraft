@@ -173,8 +173,8 @@ import { Deploy } from 'assetcraft/deploy';
 // manifests are read back from the deploy state, so callers never
 // handle them directly.
 const deploy = await Deploy.open({
-  manifests: ['dist/html-manifest.json', 'dist/js-manifest.json'],
-  deployPath: 'dist/manifest.deploy.json',
+  manifests: ['dist/manifest.html.json', 'dist/manifest.js.json'],
+  path: 'pub/deploy.json',
 });
 
 // Plan upload/removal against the previous snapshots.
