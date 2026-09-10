@@ -137,13 +137,15 @@ builder.add({
   path: 'pub/app.js',
   sha256: hash,
   size: Buffer.byteLength(code),
+  preload: [{ url: '/assets/dep.js', as: 'script' }],
   headers: {
-    Link: '</assets/dep.js>; rel=modulepreload',
+    'X-Content-Type-Options': 'nosniff',
   },
 });
 // Tip: createManifestEntry (above) does the hashing, sizing, naming,
-// integrity, and compression steps for you, and `deps` replaces the
-// hand-written Link header.
+// integrity, and compression steps for you. `preload` renders as a
+// `Link` header via `responseHeadersForEntry` (see `assetcraft/http`),
+// so don't hand-write `Link` in `headers`.
 ```
 
 ### Compress assets
