@@ -1,23 +1,3 @@
-/**
- * One-shot helper for building manifest entries: hashes content, derives
- * content-hashed file names, computes Subresource Integrity, and
- * optionally compresses the asset, filling `size`, `sha256`, and
- * `compressed` metadata. Pair with `ManifestBuilder.add()`:
- *
- * ```ts
- * const { entry, variants } = await createManifestEntry({
- *   type: 'js',
- *   mime: 'application/javascript',
- *   content: code,
- *   path: 'assets/app.js',
- *   compress: true,
- *   extra: { module: 'esm', entry: true },
- * });
- * builder.add(entry);
- * // write variants.br/.zstd/.gzip to entry.compressed.*.path
- * ```
- */
-
 import { createHash } from 'node:crypto';
 import { extname } from 'node:path';
 
@@ -147,7 +127,7 @@ export async function createManifestEntry<T extends ManifestEntryType>(
   const { type, mime, content, name, tags, headers, crossorigin, fetchPriority, preload, extra } =
     options;
 
-  const bytes = typeof content === 'string' ? Buffer.from(content) : Buffer.from(content);
+  const bytes = typeof content === 'string' ? TEXT_ENCODER.encode(content) : content;
   const size = bytes.length;
   const sha256 = calculateHash(bytes);
 
@@ -157,6 +137,7 @@ export async function createManifestEntry<T extends ManifestEntryType>(
       ? options.path
       : hashedFileName(options.path, sha256, typeof pathHash === 'number' ? pathHash : 12);
   const url = options.url ?? `/${path}`;
+  const integrity = options.integrity ?? 'sha384';
 
   const entry: Record<string, unknown> = {
     type,
@@ -188,35 +169,32 @@ export async function createManifestEntry<T extends ManifestEntryType>(
   if (preload !== undefined) {
     entry.preload = preload;
   }
-
-  const integrity = options.integrity ?? 'sha384';
   if (integrity !== false) {
     entry.integrity = computeIntegrity(bytes, integrity);
   }
 
-  let variants: CompressAssetResult = {};
-  if (options.compress !== undefined && options.compress !== false) {
-    const compressOptions = options.compress === true ? undefined : options.compress;
-    variants = await compressAsset(bytes, compressOptions);
-    const suffixes = { ...DEFAULT_SUFFIXES, ...options.compressSuffixes };
-    if (Object.keys(variants).length > 0) {
+  let variants: CompressAssetResult | undefined;
+  if (options.compress) {
+    variants = await compressAsset(bytes, options.compress === true ? undefined : options.compress);
+    const suffixes = options.compressSuffixes
+      ? { ...DEFAULT_SUFFIXES, ...options.compressSuffixes }
+      : DEFAULT_SUFFIXES;
+    const formats = Object.keys(variants) as CompressFormat[];
+    if (formats.length > 0) {
       const compressed: ManifestCompressedVariants = {};
-      for (const format of Object.keys(variants) as CompressFormat[]) {
-        const data = variants[format];
-        if (data === undefined) {
-          continue;
-        }
+      entry.compressed = compressed;
+      for (const format of formats) {
+        const data = variants[format]!;
         compressed[format] = {
           path: path + suffixes[format],
           size: data.length,
           sha256: calculateHash(data),
         };
       }
-      entry.compressed = compressed;
     }
   }
 
-  return { entry: entry as unknown as ManifestEntryFor<T>, variants };
+  return { entry: entry as unknown as ManifestEntryFor<T>, variants: variants ?? {} };
 }
 
 /** Compute an SRI string (`"<algo>-<base64>"`) for `content`. */
@@ -226,11 +204,12 @@ function computeIntegrity(content: Uint8Array, algorithm: IntegrityAlgorithm): s
 
 /** Insert a hash prefix before the extension (`app.js` → `app-<hash>.js`). */
 function hashedFileName(path: string, hash: string, hashLength: number): string {
-  const length = Number.isFinite(hashLength) ? Math.max(1, Math.floor(hashLength)) : 12;
-  const digest = hash.slice(0, length);
+  const digest = hash.slice(0, hashLength);
   const ext = extname(path);
   if (ext === '') {
     return `${path}-${digest}`;
   }
   return `${path.slice(0, -ext.length)}-${digest}${ext}`;
 }
+
+const TEXT_ENCODER = new TextEncoder();
