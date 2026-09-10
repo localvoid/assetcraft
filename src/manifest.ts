@@ -102,7 +102,7 @@ export interface ManifestBaseEntry<T extends ManifestEntryType> {
   /**
    * Resources to preload when serving this entry, in order. Each renders
    * as one `Link: <url>; rel=preload; …` header value (see
-   * `formatPreloadLink` / `responseHeadersForEntry` in `assetcraft/http`).
+   * `formatPreloadLink` / `buildResponseHeaders` in `assetcraft/http`).
    */
   preload?: ManifestPreload[];
 }

@@ -144,7 +144,7 @@ builder.add({
 });
 // Tip: createManifestEntry (above) does the hashing, sizing, naming,
 // integrity, and compression steps for you. `preload` renders as a
-// `Link` header via `responseHeadersForEntry` (see `assetcraft/http`),
+// `Link` header via `buildResponseHeaders` (see `assetcraft/http`),
 // so don't hand-write `Link` in `headers`.
 ```
 

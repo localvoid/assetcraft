@@ -7,7 +7,7 @@
 import type { CompressFormat } from './compress.js';
 import type { ManifestEntry, ManifestEntryType, ManifestPreload } from './manifest.js';
 
-/** Options for {@link cacheControlForEntry}. */
+/** Options for {@link getCacheControl}. */
 export interface CacheControlOptions {
   /** max-age for immutable assets (default 31536000 = 1 year). */
   readonly immutableMaxAge?: number;
@@ -19,7 +19,7 @@ export interface CacheControlOptions {
  * Build a `Cache-Control` value for an entry. Immutable assets get a
  * long-lived immutable directive; mutable ones must revalidate.
  */
-export function cacheControlForEntry(
+export function getCacheControl(
   entry: Pick<ManifestEntry, 'immutable'>,
   options?: CacheControlOptions,
 ): string {
@@ -33,11 +33,11 @@ export function cacheControlForEntry(
  * Build an `ETag` value for an entry from its content hash.
  * Quoted so it can be compared against `If-None-Match` directly.
  */
-export function etagForEntry(entry: Pick<ManifestEntry, 'sha256'>): string {
+export function getETag(entry: Pick<ManifestEntry, 'sha256'>): string {
   return `"${entry.sha256}"`;
 }
 
-/** Options for {@link responseHeadersForEntry}. */
+/** Options for {@link buildResponseHeaders}. */
 export interface ResponseHeadersOptions {
   /** Cache-Control header. Default: true */
   readonly cacheControl?: boolean;
@@ -58,11 +58,11 @@ export interface ResponseHeadersOptions {
 }
 
 /**
- * Infer a `Link` preload `as` value from a manifest entry type.
+ * Resolve a `Link` preload `as` value from a manifest entry type.
  * Returns `undefined` for types with no meaningful mapping
  * (`sourcemap`, `compression-dictionary`).
  */
-export function inferPreloadAs(type: ManifestEntryType): string | undefined {
+export function getPreloadAs(type: ManifestEntryType): string | undefined {
   switch (type) {
     case 'js':
       return 'script';
@@ -103,8 +103,8 @@ function quoteLinkMedia(media: string): string {
 }
 
 /**
- * Render one `Link` header value for a preloaded URL.
- * `options.as` wins; otherwise `as` is inferred from `type` (if given).
+ * Format one `Link` header value for a preloaded URL.
+ * `options.as` wins; otherwise `as` is resolved from `type` (if given).
  * `crossorigin` defaults to `anonymous` for fonts.
  */
 export function formatPreloadLink(
@@ -112,7 +112,7 @@ export function formatPreloadLink(
   options?: PreloadLinkOptions,
   type?: ManifestEntryType,
 ): string {
-  const as = options?.as ?? (type !== undefined ? inferPreloadAs(type) : undefined);
+  const as = options?.as ?? (type !== undefined ? getPreloadAs(type) : undefined);
   const crossorigin = options?.crossorigin ?? (as === 'font' ? 'anonymous' : undefined);
   let link = `<${target}>; rel=preload`;
   if (as !== undefined) {
@@ -131,10 +131,10 @@ export function formatPreloadLink(
 }
 
 /**
- * Render the `Link` header value for a list of preloads (joined with
+ * Format the `Link` header value for a list of preloads (joined with
  * `', '`). Returns `undefined` when there is nothing to preload.
  */
-export function linkHeaderForPreloads(
+export function formatLinkHeader(
   preloads: readonly ManifestPreload[] | undefined,
 ): string | undefined {
   if (preloads === undefined || preloads.length === 0) {
@@ -151,7 +151,7 @@ export function linkHeaderForPreloads(
  * in `entry.headers` is appended with `, `).
  * `entry.headers` are merged last and take precedence.
  */
-export function responseHeadersForEntry(
+export function buildResponseHeaders(
   entry: ManifestEntry,
   options?: ResponseHeadersOptions,
 ): Record<string, string> {
@@ -159,19 +159,19 @@ export function responseHeadersForEntry(
     'Content-Type': entry.mime,
   };
   if (options?.cacheControl !== false) {
-    headers['Cache-Control'] = cacheControlForEntry(entry);
+    headers['Cache-Control'] = getCacheControl(entry);
   }
   if (options?.contentLength !== false) {
     headers['Content-Length'] = String(variantSizeFor(entry, options));
   }
   if (options?.etag !== false) {
-    headers['ETag'] = etagForEntry(entry);
+    headers['ETag'] = getETag(entry);
   }
   if (options?.encoding !== undefined) {
     headers['Content-Encoding'] = options.encoding;
     headers['Vary'] = 'Accept-Encoding';
   }
-  const preloadLink = options?.link === false ? undefined : linkHeaderForPreloads(entry.preload);
+  const preloadLink = options?.link === false ? undefined : formatLinkHeader(entry.preload);
   if (entry.headers !== undefined) {
     for (const [k, v] of Object.entries(entry.headers)) {
       if (k === 'Link' && preloadLink !== undefined) {
