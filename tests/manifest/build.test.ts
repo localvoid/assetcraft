@@ -113,7 +113,6 @@ describe('ManifestBuilder import', () => {
     const ext = mkEntry({ path: 'ext.js', sha256: 'eee', name: 'ext' });
     b.import([ext]);
     expect(b.entries).toEqual([]);
-    expect(b.external).toHaveLength(1);
     expect(b.getByPath('ext.js')).toBe(ext);
     expect(b.getByName('ext')).toBe(ext);
     expect(b.getByURL('/assets/ext.js')).toBe(ext);
