@@ -4,8 +4,9 @@
  * deploy summaries, cache-invalidation decisions, and build logging.
  */
 
+import { isDeepStrictEqual } from 'node:util';
+
 import type { Manifest, ManifestEntry } from '../manifest.js';
-import { urlToString } from '../manifest.js';
 
 /** A single entry that exists in both manifests with differences. */
 export interface ManifestChangedEntry {
@@ -46,7 +47,7 @@ export function diffManifests(prev: Manifest, next: Manifest): ManifestDiff {
     const old = prevByPath.get(entry.path);
     if (old === undefined) {
       diff.added.push(entry);
-    } else if (isEqualManifestEntry(old, entry)) {
+    } else if (isDeepStrictEqual(old, entry)) {
       diff.unchanged.push(entry);
     } else {
       diff.changed.push({ prev: old, next: entry, hashChanged: old.sha256 !== entry.sha256 });
@@ -58,83 +59,4 @@ export function diffManifests(prev: Manifest, next: Manifest): ManifestDiff {
     }
   }
   return diff;
-}
-
-/**
- * Base-entry keys compared explicitly. Every other key is type-specific
- * media metadata or hints and is compared generically, so new per-type
- * fields are covered without updating this function.
- */
-const BASE_KEYS: ReadonlySet<string> = new Set([
-  'type',
-  'mime',
-  'immutable',
-  'path',
-  'sha256',
-  'size',
-  'url',
-  'name',
-  'tags',
-  'headers',
-  'integrity',
-  'compressed',
-  'crossorigin',
-  'fetchPriority',
-  'preload',
-]);
-
-/**
- * Check whether two manifest entries carry equal metadata. A `false`
- * result is always safe (treat entries as different); it just forgoes
- * reference-stability optimizations.
- */
-export function isEqualManifestEntry(a: ManifestEntry, b: ManifestEntry): boolean {
-  if (a === b) {
-    return true;
-  }
-  if (
-    a.type !== b.type ||
-    a.mime !== b.mime ||
-    a.immutable !== b.immutable ||
-    a.path !== b.path ||
-    a.sha256 !== b.sha256 ||
-    a.size !== b.size ||
-    a.integrity !== b.integrity ||
-    a.crossorigin !== b.crossorigin ||
-    a.fetchPriority !== b.fetchPriority ||
-    !isEqualJsonValue(a.preload, b.preload) ||
-    urlToString(a.url) !== urlToString(b.url) ||
-    !isEqualJsonValue(a.name, b.name) ||
-    !isEqualJsonValue(a.tags, b.tags) ||
-    !isEqualJsonValue(a.headers, b.headers) ||
-    !isEqualJsonValue(a.compressed, b.compressed)
-  ) {
-    return false;
-  }
-  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
-  for (const key of keys) {
-    if (BASE_KEYS.has(key)) {
-      continue;
-    }
-    if (
-      !isEqualJsonValue(
-        (a as unknown as Record<string, unknown>)[key],
-        (b as unknown as Record<string, unknown>)[key],
-      )
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/** Compare optional JSON-like metadata (`name`, `tags`, `headers`, …). */
-function isEqualJsonValue(a: unknown, b: unknown): boolean {
-  if (a === b) {
-    return true;
-  }
-  if (a === undefined || b === undefined) {
-    return false;
-  }
-  return JSON.stringify(a) === JSON.stringify(b);
 }
