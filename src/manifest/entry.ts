@@ -27,6 +27,7 @@ import type {
   ManifestCompressedVariants,
   ManifestEntry,
   ManifestEntryType,
+  ManifestPreload,
 } from '../manifest.js';
 import { compressAsset, type CompressAssetOptions, type CompressAssetResult } from '../compress.js';
 import { calculateHash } from '../file.js';
@@ -112,8 +113,8 @@ export interface CreateManifestEntryOptions<T extends ManifestEntryType = Manife
   readonly crossorigin?: ManifestBaseEntry<T>['crossorigin'];
   /** Fetch-priority hint for HTML tag generation. */
   readonly fetchPriority?: ManifestBaseEntry<T>['fetchPriority'];
-  /** Hint that the asset should be preloaded. */
-  readonly preload?: boolean;
+  /** Resources to preload when serving the entry (rendered as `Link` headers). */
+  readonly preload?: ManifestPreload[];
   /**
    * Type-specific media metadata and hints (dimensions, font
    * descriptors, `module`, `deps`, …). `match` is required here for

@@ -49,6 +49,24 @@ export interface ManifestImageCandidate {
 }
 
 /**
+ * A single resource to preload when serving the entry. Renders as one
+ * `Link: <url>; rel=preload; …` header value (see `formatPreloadLink` in
+ * `assetcraft/http`).
+ */
+export interface ManifestPreload {
+  /** Public URL of the preloaded resource. */
+  url: string;
+  /** Link `as` value (e.g. `"script"`, `"style"`, `"image"`, `"font"`). */
+  as?: string;
+  /** CORS mode for the preload request. */
+  crossorigin?: 'anonymous' | 'use-credentials';
+  /** Fetch-priority hint for the preload request. */
+  fetchPriority?: 'high' | 'low' | 'auto';
+  /** Media query restricting when the preload applies. */
+  media?: string;
+}
+
+/**
  * Base manifest entry with fields shared by all asset types.
  * @typeParam T - The specific asset type discriminant.
  */
@@ -81,8 +99,12 @@ export interface ManifestBaseEntry<T extends ManifestEntryType> {
   crossorigin?: 'anonymous' | 'use-credentials';
   /** Fetch-priority hint for `<script fetchpriority>` / `<link fetchpriority>`. */
   fetchPriority?: 'high' | 'low' | 'auto';
-  /** Hint that the asset should be preloaded (`<link rel="preload">`). */
-  preload?: boolean;
+  /**
+   * Resources to preload when serving this entry, in order. Each renders
+   * as one `Link: <url>; rel=preload; …` header value (see
+   * `formatPreloadLink` / `responseHeadersForEntry` in `assetcraft/http`).
+   */
+  preload?: ManifestPreload[];
 }
 
 export interface ManifestJSEntry extends ManifestBaseEntry<'js'> {

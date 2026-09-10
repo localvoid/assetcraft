@@ -128,8 +128,8 @@ export function validateManifestEntry(entry: unknown): string[] {
   ) {
     errors.push('fetchPriority must be "high", "low", or "auto"');
   }
-  if (e['preload'] !== undefined && typeof e['preload'] !== 'boolean') {
-    errors.push('preload must be a boolean');
+  if (e['preload'] !== undefined) {
+    errors.push(...validatePreloads(e['preload']));
   }
   errors.push(...validateTypeMeta(e));
   if (e['type'] === 'compression-dictionary') {
@@ -138,6 +138,47 @@ export function validateManifestEntry(entry: unknown): string[] {
     }
     if (e['matchDest'] !== undefined && typeof e['matchDest'] !== 'string') {
       errors.push('matchDest must be a string for compression-dictionary entries');
+    }
+  }
+  return errors;
+}
+
+/** Validate the `preload` list of structured `Link` preload entries. */
+function validatePreloads(preload: unknown): string[] {
+  if (!Array.isArray(preload)) {
+    return ['preload must be an array'];
+  }
+  const errors: string[] = [];
+  for (let i = 0; i < preload.length; i++) {
+    const item = preload[i];
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+      errors.push(`preload[${i}] must be an object`);
+      continue;
+    }
+    const p = item as Record<string, unknown>;
+    if (typeof p['url'] !== 'string' || p['url'] === '') {
+      errors.push(`preload[${i}].url must be a non-empty string`);
+    }
+    if (p['as'] !== undefined && (typeof p['as'] !== 'string' || p['as'] === '')) {
+      errors.push(`preload[${i}].as must be a non-empty string`);
+    }
+    if (
+      p['crossorigin'] !== undefined &&
+      p['crossorigin'] !== 'anonymous' &&
+      p['crossorigin'] !== 'use-credentials'
+    ) {
+      errors.push(`preload[${i}].crossorigin must be "anonymous" or "use-credentials"`);
+    }
+    if (
+      p['fetchPriority'] !== undefined &&
+      p['fetchPriority'] !== 'high' &&
+      p['fetchPriority'] !== 'low' &&
+      p['fetchPriority'] !== 'auto'
+    ) {
+      errors.push(`preload[${i}].fetchPriority must be "high", "low", or "auto"`);
+    }
+    if (p['media'] !== undefined && (typeof p['media'] !== 'string' || p['media'] === '')) {
+      errors.push(`preload[${i}].media must be a non-empty string`);
     }
   }
   return errors;

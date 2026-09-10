@@ -102,7 +102,7 @@ export function isEqualManifestEntry(a: ManifestEntry, b: ManifestEntry): boolea
     a.integrity !== b.integrity ||
     a.crossorigin !== b.crossorigin ||
     a.fetchPriority !== b.fetchPriority ||
-    a.preload !== b.preload ||
+    !isEqualJsonValue(a.preload, b.preload) ||
     urlToString(a.url) !== urlToString(b.url) ||
     !isEqualJsonValue(a.name, b.name) ||
     !isEqualJsonValue(a.tags, b.tags) ||

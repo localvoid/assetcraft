@@ -151,6 +151,28 @@ describe('isEqualManifestEntry', () => {
     expect(isEqualManifestEntry(base, { ...base, name: undefined })).toBe(false);
   });
 
+  test('detects preload differences structurally', () => {
+    const base = mkEntry({ path: 'a.js', sha256: 'aaa' });
+    const withPreload = {
+      ...base,
+      preload: [{ url: '/assets/hero.png', as: 'image' }],
+    };
+    expect(isEqualManifestEntry(base, withPreload)).toBe(false);
+    expect(isEqualManifestEntry(withPreload, { ...withPreload })).toBe(true);
+    expect(
+      isEqualManifestEntry(withPreload, {
+        ...withPreload,
+        preload: [{ url: '/assets/hero.png', as: 'image' }],
+      }),
+    ).toBe(true);
+    expect(
+      isEqualManifestEntry(withPreload, {
+        ...withPreload,
+        preload: [{ url: '/assets/other.png', as: 'image' }],
+      }),
+    ).toBe(false);
+  });
+
   test('detects compressed and per-type metadata differences', () => {
     const base = mkEntry({ path: 'a.js', sha256: 'aaa' });
     expect(

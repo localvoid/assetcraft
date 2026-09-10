@@ -68,7 +68,8 @@ export interface ManifestBaseEntry<T extends ManifestEntryType> {
   // (optional) HTML hints: crossorigin, fetchPriority, preload
   crossorigin?: 'anonymous' | 'use-credentials';
   fetchPriority?: 'high' | 'low' | 'auto';
-  preload?: boolean;
+  // (optional) Resources to preload (rendered as `Link` headers, see `assetcraft/http`)
+  preload?: ManifestPreload[]; // { url, as?, crossorigin?, fetchPriority?, media? }
 }
 
 // Per-type media metadata and HTML hints, e.g. JS module/deps,

@@ -136,7 +136,7 @@ describe('validateManifestEntry', () => {
           compressed: { br: { path: 'app.js.br', size: 40, sha256: 'abcDEF123-_' } },
           crossorigin: 'anonymous',
           fetchPriority: 'high',
-          preload: true,
+          preload: [{ url: '/assets/hero.png', as: 'image' }],
           module: 'esm',
           entry: true,
           deps: ['/assets/dep.js'],
@@ -172,6 +172,45 @@ describe('validateManifestEntry', () => {
     expect(validateManifestEntry(validEntry({ module: 'cjs' }))).toContain(
       'module must be "esm" or "script"',
     );
+  });
+
+  test('rejects bad preload', () => {
+    expect(validateManifestEntry(validEntry({ preload: true }))).toContain(
+      'preload must be an array',
+    );
+    expect(validateManifestEntry(validEntry({ preload: [42] }))).toContain(
+      'preload[0] must be an object',
+    );
+    expect(validateManifestEntry(validEntry({ preload: [{ url: '' }] }))).toContain(
+      'preload[0].url must be a non-empty string',
+    );
+    expect(validateManifestEntry(validEntry({ preload: [{ url: '/a.png', as: '' }] }))).toContain(
+      'preload[0].as must be a non-empty string',
+    );
+    expect(
+      validateManifestEntry(validEntry({ preload: [{ url: '/a.png', crossorigin: 'always' }] })),
+    ).toContain('preload[0].crossorigin must be "anonymous" or "use-credentials"');
+    expect(
+      validateManifestEntry(validEntry({ preload: [{ url: '/a.png', fetchPriority: 'urgent' }] })),
+    ).toContain('preload[0].fetchPriority must be "high", "low", or "auto"');
+    expect(
+      validateManifestEntry(validEntry({ preload: [{ url: '/a.png', media: '' }] })),
+    ).toContain('preload[0].media must be a non-empty string');
+    expect(
+      validateManifestEntry(
+        validEntry({
+          preload: [
+            {
+              url: '/fonts/body.woff2',
+              as: 'font',
+              crossorigin: 'anonymous',
+              fetchPriority: 'high',
+              media: 'screen',
+            },
+          ],
+        }),
+      ),
+    ).toEqual([]);
   });
 
   test('rejects bad name', () => {

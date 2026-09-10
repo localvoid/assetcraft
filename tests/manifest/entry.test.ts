@@ -39,7 +39,7 @@ describe('createManifestEntry', () => {
       tags: ['app'],
       crossorigin: 'anonymous',
       fetchPriority: 'high',
-      preload: true,
+      preload: [{ url: '/assets/hero.png', as: 'image' }],
       extra: { media: 'screen' },
     });
     expect(entry.immutable).toBeUndefined();

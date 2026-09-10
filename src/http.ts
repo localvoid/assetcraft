@@ -1,10 +1,11 @@
 /**
  * HTTP serving helpers for static assets: cache directives, content
- * encodings for compressed variants, and response header assembly.
+ * encodings for compressed variants, preload `Link` headers, and response
+ * header assembly.
  */
 
 import type { CompressFormat } from './compress.js';
-import type { ManifestEntry } from './manifest.js';
+import type { ManifestEntry, ManifestEntryType, ManifestPreload } from './manifest.js';
 
 /** Options for {@link cacheControlForEntry}. */
 export interface CacheControlOptions {
@@ -44,6 +45,8 @@ export interface ResponseHeadersOptions {
   readonly contentLength?: boolean;
   /** ETag header from `entry.sha256`. Default: true */
   readonly etag?: boolean;
+  /** `Link` header from `entry.preload`. Default: true */
+  readonly link?: boolean;
   /** Compression format of the variant being served (adds Content-Encoding + Vary). */
   readonly encoding?: CompressFormat;
   /**
@@ -55,9 +58,97 @@ export interface ResponseHeadersOptions {
 }
 
 /**
+ * Infer a `Link` preload `as` value from a manifest entry type.
+ * Returns `undefined` for types with no meaningful mapping
+ * (`sourcemap`, `compression-dictionary`).
+ */
+export function inferPreloadAs(type: ManifestEntryType): string | undefined {
+  switch (type) {
+    case 'js':
+      return 'script';
+    case 'css':
+      return 'style';
+    case 'font':
+      return 'font';
+    case 'image':
+    case 'svg':
+      return 'image';
+    case 'audio':
+      return 'audio';
+    case 'video':
+      return 'video';
+    case 'html':
+      return 'document';
+    case 'wasm':
+    case 'text':
+    case 'binary':
+      return 'fetch';
+    default:
+      return undefined;
+  }
+}
+
+/** Per-resource `Link` params for {@link formatPreloadLink}. */
+export type PreloadLinkOptions = Pick<
+  ManifestPreload,
+  'as' | 'crossorigin' | 'fetchPriority' | 'media'
+>;
+
+/** Quotes a `Link` `media` parameter when it contains delimiters/whitespace. */
+function quoteLinkMedia(media: string): string {
+  if (/[\s;,"]/.test(media)) {
+    return `"${media.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  }
+  return media;
+}
+
+/**
+ * Render one `Link` header value for a preloaded URL.
+ * `options.as` wins; otherwise `as` is inferred from `type` (if given).
+ * `crossorigin` defaults to `anonymous` for fonts.
+ */
+export function formatPreloadLink(
+  target: string,
+  options?: PreloadLinkOptions,
+  type?: ManifestEntryType,
+): string {
+  const as = options?.as ?? (type !== undefined ? inferPreloadAs(type) : undefined);
+  const crossorigin = options?.crossorigin ?? (as === 'font' ? 'anonymous' : undefined);
+  let link = `<${target}>; rel=preload`;
+  if (as !== undefined) {
+    link += `; as=${as}`;
+  }
+  if (crossorigin !== undefined) {
+    link += `; crossorigin=${crossorigin}`;
+  }
+  if (options?.fetchPriority !== undefined) {
+    link += `; fetchpriority=${options.fetchPriority}`;
+  }
+  if (options?.media !== undefined) {
+    link += `; media=${quoteLinkMedia(options.media)}`;
+  }
+  return link;
+}
+
+/**
+ * Render the `Link` header value for a list of preloads (joined with
+ * `', '`). Returns `undefined` when there is nothing to preload.
+ */
+export function linkHeaderForPreloads(
+  preloads: readonly ManifestPreload[] | undefined,
+): string | undefined {
+  if (preloads === undefined || preloads.length === 0) {
+    return undefined;
+  }
+  return preloads.map((preload) => formatPreloadLink(preload.url, preload)).join(', ');
+}
+
+/**
  * Assemble response headers for an entry: Content-Type from MIME,
  * Cache-Control from the immutable hint, Content-Length from size, ETag from the
- * content hash, Content-Encoding/Vary for compressed variants.
+ * content hash, Content-Encoding/Vary for compressed variants, and `Link`
+ * from `entry.preload` (generated links come first; an existing user `Link`
+ * in `entry.headers` is appended with `, `).
  * `entry.headers` are merged last and take precedence.
  */
 export function responseHeadersForEntry(
@@ -80,10 +171,18 @@ export function responseHeadersForEntry(
     headers['Content-Encoding'] = options.encoding;
     headers['Vary'] = 'Accept-Encoding';
   }
+  const preloadLink = options?.link === false ? undefined : linkHeaderForPreloads(entry.preload);
   if (entry.headers !== undefined) {
     for (const [k, v] of Object.entries(entry.headers)) {
-      headers[k] = v;
+      if (k === 'Link' && preloadLink !== undefined) {
+        headers[k] = `${preloadLink}, ${v}`;
+      } else {
+        headers[k] = v;
+      }
     }
+  }
+  if (preloadLink !== undefined && headers['Link'] === undefined) {
+    headers['Link'] = preloadLink;
   }
   return headers;
 }
