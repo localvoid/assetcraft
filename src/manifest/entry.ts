@@ -79,7 +79,7 @@ export interface CreateManifestEntryOptions<T extends ManifestEntryType = Manife
   readonly content: string | Uint8Array;
   /**
    * Output-relative path before hashing (e.g. "assets/app.js").
-   * When `hashed` is enabled (default), the content hash is inserted
+   * When `pathHash` is enabled (default), the content hash is inserted
    * before the extension (e.g. "assets/app-a1b2c3.js").
    */
   readonly path: string;
@@ -96,10 +96,12 @@ export interface CreateManifestEntryOptions<T extends ManifestEntryType = Manife
   readonly headers?: Record<string, string>;
   /** Mark the entry immutable (default true). */
   readonly immutable?: boolean;
-  /** Insert the content hash into the file name (default true). */
-  readonly hashed?: boolean;
-  /** Hash prefix length for hashed names (default 12). */
-  readonly hashLength?: number;
+  /**
+   * Insert the content hash into the file name. `true` (default) uses a
+   * 12-character prefix, a number uses that prefix length, `false`
+   * disables hashing.
+   */
+  readonly pathHash?: boolean | number;
   /** Compute an SRI string with this algorithm (default "sha384", false to skip). */
   readonly integrity?: false | IntegrityAlgorithm;
   /**
@@ -149,45 +151,47 @@ export async function createManifestEntry<T extends ManifestEntryType>(
   const size = bytes.length;
   const sha256 = calculateHash(bytes);
 
-  const hashLength = options.hashLength ?? 12;
-  const finalPath =
-    options.hashed === false ? options.path : hashedFileName(options.path, sha256, hashLength);
-  const url = options.url ?? `/${finalPath}`;
+  const pathHash = options.pathHash ?? true;
+  const path =
+    pathHash === false
+      ? options.path
+      : hashedFileName(options.path, sha256, typeof pathHash === 'number' ? pathHash : 12);
+  const url = options.url ?? `/${path}`;
 
   const entry: Record<string, unknown> = {
     type,
     mime,
     url,
-    path: finalPath,
+    path,
     sha256,
     size,
     ...extra,
   };
   if (options.immutable !== false) {
-    entry['immutable'] = true;
+    entry.immutable = true;
   }
   if (name !== undefined) {
-    entry['name'] = name;
+    entry.name = name;
   }
   if (tags !== undefined) {
-    entry['tags'] = tags;
+    entry.tags = tags;
   }
   if (headers !== undefined) {
-    entry['headers'] = headers;
+    entry.headers = headers;
   }
   if (crossorigin !== undefined) {
-    entry['crossorigin'] = crossorigin;
+    entry.crossorigin = crossorigin;
   }
   if (fetchPriority !== undefined) {
-    entry['fetchPriority'] = fetchPriority;
+    entry.fetchPriority = fetchPriority;
   }
   if (preload !== undefined) {
-    entry['preload'] = preload;
+    entry.preload = preload;
   }
 
   const integrity = options.integrity ?? 'sha384';
   if (integrity !== false) {
-    entry['integrity'] = computeIntegrity(bytes, integrity);
+    entry.integrity = computeIntegrity(bytes, integrity);
   }
 
   let variants: CompressAssetResult = {};
@@ -203,12 +207,12 @@ export async function createManifestEntry<T extends ManifestEntryType>(
           continue;
         }
         compressed[format] = {
-          path: finalPath + suffixes[format],
+          path: path + suffixes[format],
           size: data.length,
           sha256: calculateHash(data),
         };
       }
-      entry['compressed'] = compressed;
+      entry.compressed = compressed;
     }
   }
 
@@ -222,7 +226,8 @@ function computeIntegrity(content: Uint8Array, algorithm: IntegrityAlgorithm): s
 
 /** Insert a hash prefix before the extension (`app.js` → `app-<hash>.js`). */
 function hashedFileName(path: string, hash: string, hashLength: number): string {
-  const digest = hash.slice(0, Math.max(1, hashLength));
+  const length = Number.isFinite(hashLength) ? Math.max(1, Math.floor(hashLength)) : 12;
+  const digest = hash.slice(0, length);
   const ext = extname(path);
   if (ext === '') {
     return `${path}-${digest}`;

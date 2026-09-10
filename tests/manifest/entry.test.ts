@@ -25,7 +25,7 @@ describe('createManifestEntry', () => {
     expect(validateManifestEntry(entry)).toEqual([]);
   });
 
-  test('respects immutable, hashed, integrity, and url overrides', async () => {
+  test('respects immutable, pathHash, integrity, and url overrides', async () => {
     const { entry } = await createManifestEntry({
       type: 'css',
       mime: 'text/css',
@@ -33,7 +33,7 @@ describe('createManifestEntry', () => {
       path: 'assets/style.css',
       url: 'https://cdn.example/assets/style.css',
       immutable: false,
-      hashed: false,
+      pathHash: false,
       integrity: false,
       name: 'style',
       tags: ['app'],
@@ -79,7 +79,7 @@ describe('createManifestEntry', () => {
       mime: 'application/json',
       content: 'b'.repeat(4096),
       path: 'data/strings.json',
-      hashLength: 8,
+      pathHash: 8,
       compress: true,
       compressSuffixes: { gzip: '.gzip' },
       extra: { charset: 'utf-8' },
