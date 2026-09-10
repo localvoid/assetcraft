@@ -40,7 +40,7 @@ function openSingle(
 ): Promise<Deploy> {
   const manifestPath = join(dir, 'manifest.json');
   writeManifest(manifestPath, manifest);
-  return Deploy.open({
+  return Deploy.init({
     manifests: [manifestPath],
     path: join(dir, 'manifest.deploy.json'),
     ...options,
@@ -58,7 +58,7 @@ test('urlToString handles string and object urls', () => {
 test('open rejects empty or duplicate manifests', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
   const path = join(dir.path, 'manifest.deploy.json');
-  await Deploy.open({ manifests: [], path }).then(
+  await Deploy.init({ manifests: [], path }).then(
     () => {
       throw new Error('expected open to throw');
     },
@@ -68,7 +68,7 @@ test('open rejects empty or duplicate manifests', async () => {
   );
   const manifestPath = join(dir.path, 'manifest.json');
   writeManifest(manifestPath, []);
-  await Deploy.open({ manifests: [manifestPath, manifestPath], path }).then(
+  await Deploy.init({ manifests: [manifestPath, manifestPath], path }).then(
     () => {
       throw new Error('expected open to throw');
     },
@@ -84,7 +84,7 @@ test('open combines multiple manifests in order', async () => {
   const jsPath = join(dir.path, 'js-manifest.json');
   writeManifest(htmlPath, [jsEntry('/index.html', 'index.html', 'hashH')]);
   writeManifest(jsPath, [jsEntry('/s/a.js', 'a.js', 'hash1'), jsEntry('/s/b.js', 'b.js', 'hash2')]);
-  const deploy = await Deploy.open({
+  const deploy = await Deploy.init({
     manifests: [htmlPath, jsPath],
     path: join(dir.path, 'manifest.deploy.json'),
   });
@@ -102,7 +102,7 @@ test('files resolves each manifest directory', async () => {
   const jsPath = join(dir.path, 'js', 'manifest.json');
   writeManifest(htmlPath, [jsEntry('/index.html', 'index.html', 'hashH')]);
   writeManifest(jsPath, [jsEntry('/s/a.js', 'a.js', 'hash1')]);
-  const deploy = await Deploy.open({
+  const deploy = await Deploy.init({
     manifests: [htmlPath, jsPath],
     path: join(dir.path, 'manifest.deploy.json'),
   });
@@ -119,10 +119,10 @@ test('same relative path in different manifests stays distinct', async () => {
   writeManifest(firstPath, [jsEntry('/one.js', 'app.js', 'hash1')]);
   writeManifest(secondPath, [jsEntry('/two.js', 'app.js', 'hash2')]);
   const path = join(dir.path, 'manifest.deploy.json');
-  const first = await Deploy.open({ manifests: [firstPath, secondPath], path });
+  const first = await Deploy.init({ manifests: [firstPath, secondPath], path });
   equal(first.plan().add.length, 2);
   await first.commit();
-  const second = await Deploy.open({ manifests: [firstPath, secondPath], path });
+  const second = await Deploy.init({ manifests: [firstPath, secondPath], path });
   const plan = second.plan();
   equal(plan.add.length, 0);
   equal(plan.unchanged, 2);
@@ -145,7 +145,7 @@ test('open passes on same url+hash, throws on reuse', async () => {
   const path = join(dir.path, 'manifest.deploy.json');
   const manifestPath = join(dir.path, 'manifest.json');
   writeManifest(manifestPath, [jsEntry('/s/a.js', 'dist/a.js', 'hash2')]);
-  await Deploy.open({ manifests: [manifestPath], path }).then(
+  await Deploy.init({ manifests: [manifestPath], path }).then(
     () => {
       throw new Error('expected open to throw');
     },
@@ -164,14 +164,14 @@ test('open validates against persisted history', async () => {
     path,
     JSON.stringify({ history: [{ url: '/s/a.js', sha256: 'hash1' }], pending: [] }),
   );
-  const deploy = await Deploy.open({ manifests: [manifestPath], path });
+  const deploy = await Deploy.init({ manifests: [manifestPath], path });
   equal(deploy.manifest.length, 1);
 
   writeFileSync(
     path,
     JSON.stringify({ history: [{ url: '/s/a.js', sha256: 'other' }], pending: [] }),
   );
-  await Deploy.open({ manifests: [manifestPath], path }).then(
+  await Deploy.init({ manifests: [manifestPath], path }).then(
     () => {
       throw new Error('expected open to throw');
     },
@@ -181,7 +181,7 @@ test('open validates against persisted history', async () => {
   );
 
   writeManifest(manifestPath, 'not a manifest' as never);
-  await Deploy.open({ manifests: [manifestPath], path }).then(
+  await Deploy.init({ manifests: [manifestPath], path }).then(
     () => {
       throw new Error('expected open to throw');
     },
@@ -193,7 +193,7 @@ test('open validates against persisted history', async () => {
 
 test('open throws on missing manifest file', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
-  await Deploy.open({
+  await Deploy.init({
     manifests: [join(dir.path, 'missing.json')],
     path: join(dir.path, 'manifest.deploy.json'),
   }).then(
@@ -224,7 +224,7 @@ test('open covers object urls with origin-scoped keys', async () => {
       pending: [],
     }),
   );
-  await Deploy.open({ manifests: [manifestPath], path });
+  await Deploy.init({ manifests: [manifestPath], path });
   // A same-path URL on another origin is a different key — no collision.
   writeFileSync(
     path,
@@ -233,7 +233,7 @@ test('open covers object urls with origin-scoped keys', async () => {
       pending: [],
     }),
   );
-  await Deploy.open({ manifests: [manifestPath], path });
+  await Deploy.init({ manifests: [manifestPath], path });
   // Same origin + path with different content collides.
   writeFileSync(
     path,
@@ -242,7 +242,7 @@ test('open covers object urls with origin-scoped keys', async () => {
       pending: [],
     }),
   );
-  await Deploy.open({ manifests: [manifestPath], path }).then(
+  await Deploy.init({ manifests: [manifestPath], path }).then(
     () => {
       throw new Error('expected open to throw');
     },
@@ -261,7 +261,7 @@ test('open ignores mutable entries', async () => {
   );
   const manifestPath = join(dir.path, 'manifest.json');
   writeManifest(manifestPath, [{ ...jsEntry('/s/a.js', 'dist/a.js', 'hash2'), immutable: false }]);
-  await Deploy.open({ manifests: [manifestPath], path });
+  await Deploy.init({ manifests: [manifestPath], path });
 });
 
 test('open treats missing state as first deploy, throws on corrupt', async () => {
@@ -269,11 +269,11 @@ test('open treats missing state as first deploy, throws on corrupt', async () =>
   const manifestPath = join(dir.path, 'manifest.json');
   const path = join(dir.path, 'manifest.deploy.json');
   writeManifest(manifestPath, [jsEntry('/s/a.js', 'dist/a.js', 'hash1')]);
-  const deploy = await Deploy.open({ manifests: [manifestPath], path });
+  const deploy = await Deploy.init({ manifests: [manifestPath], path });
   equal(deploy.plan().add.length, 1);
 
   writeFileSync(path, 'corrupt');
-  await Deploy.open({ manifests: [manifestPath], path }).then(
+  await Deploy.init({ manifests: [manifestPath], path }).then(
     () => {
       throw new Error('expected open to throw');
     },
@@ -307,7 +307,7 @@ test('open rejects invalid deploy state shapes', async () => {
   ];
   for (const [body, re] of cases) {
     writeFileSync(path, body);
-    await Deploy.open({ manifests: [manifestPath], path }).then(
+    await Deploy.init({ manifests: [manifestPath], path }).then(
       () => {
         throw new Error(`expected open to throw for ${body}`);
       },
@@ -317,7 +317,7 @@ test('open rejects invalid deploy state shapes', async () => {
     );
   }
   writeFileSync(path, '{}');
-  const deploy = await Deploy.open({ manifests: [manifestPath], path });
+  const deploy = await Deploy.init({ manifests: [manifestPath], path });
   equal(deploy.plan().add.length, 0);
 });
 
@@ -335,13 +335,13 @@ test('state without prevManifests uploads everything, keeps history', async () =
       pending: [{ path: 'dist/old.js', url: '/s/old.js', missedDeploys: 1 }],
     }),
   );
-  const deploy = await Deploy.open({ manifests: [manifestPath], path });
+  const deploy = await Deploy.init({ manifests: [manifestPath], path });
   const plan = deploy.plan();
   equal(plan.add.length, 1);
   equal(plan.remove.length, 0);
   // Unattributed pending can't match a snapshot: flushed on commit.
   await deploy.commit();
-  const reopened = await Deploy.open({ manifests: [manifestPath], path });
+  const reopened = await Deploy.init({ manifests: [manifestPath], path });
   equal(reopened.plan().pendingRemove.length, 0);
   equal(reopened.plan().unchanged, 1);
 });
@@ -353,7 +353,7 @@ test('commit stores prevManifests snapshots', async () => {
   const path = join(dir.path, 'manifest.deploy.json');
   writeManifest(htmlPath, [jsEntry('/index.html', 'index.html', 'hashH')]);
   writeManifest(jsPath, [jsEntry('/s/a.js', 'a.js', 'hash1')]);
-  await (await Deploy.open({ manifests: [htmlPath, jsPath], path })).commit();
+  await (await Deploy.init({ manifests: [htmlPath, jsPath], path })).commit();
   const state = JSON.parse(readFileSync(path, 'utf8')) as {
     prevManifests: Array<{ source: string; dir: string; entries: Manifest }>;
   };
@@ -374,8 +374,8 @@ test('second cycle needs no prev input', async () => {
   const manifestPath = join(dir.path, 'manifest.json');
   const path = join(dir.path, 'manifest.deploy.json');
   writeManifest(manifestPath, [jsEntry('/s/a.js', 'dist/a.js', 'hash1')]);
-  await (await Deploy.open({ manifests: [manifestPath], path })).commit();
-  const deploy = await Deploy.open({ manifests: [manifestPath], path });
+  await (await Deploy.init({ manifests: [manifestPath], path })).commit();
+  const deploy = await Deploy.init({ manifests: [manifestPath], path });
   const plan = deploy.plan();
   equal(plan.add.length, 0);
   equal(plan.remove.length, 0);
@@ -390,7 +390,7 @@ test('plan uploads added + hash-changed, keeps metadata-only', async () => {
     jsEntry('/s/a.js', 'dist/a.js', 'hash1'),
     jsEntry('/s/b.js', 'dist/b.js', 'hashB'),
   ]);
-  await (await Deploy.open({ manifests: [manifestPath], path })).commit();
+  await (await Deploy.init({ manifests: [manifestPath], path })).commit();
   // Content change ships under a new hashed URL (same-URL reuse is forbidden);
   // headers-only edits upload nothing.
   writeManifest(manifestPath, [
@@ -398,7 +398,7 @@ test('plan uploads added + hash-changed, keeps metadata-only', async () => {
     { ...jsEntry('/s/b.js', 'dist/b.js', 'hashB'), headers: { 'x-new': '1' } },
     jsEntry('/s/c.js', 'dist/c.js', 'hashC'),
   ]);
-  const plan = (await Deploy.open({ manifests: [manifestPath], path })).plan();
+  const plan = (await Deploy.init({ manifests: [manifestPath], path })).plan();
   deepEqual(plan.add.map((f) => f.url).sort(), ['/s/a-h2.js', '/s/c.js']);
   equal(plan.unchanged, 0);
 });
@@ -409,18 +409,18 @@ test('plan holds removals for maxMissedDeploys then deletes', async () => {
   const path = join(dir.path, 'manifest.deploy.json');
   const oldEntry = jsEntry('/s/old.js', 'dist/old.js', 'hashOld');
   writeManifest(manifestPath, [oldEntry, jsEntry('/s/a.js', 'dist/a.js', 'hash1')]);
-  await (await Deploy.open({ manifests: [manifestPath], path })).commit();
+  await (await Deploy.init({ manifests: [manifestPath], path })).commit();
 
   const next: Manifest = [jsEntry('/s/a.js', 'dist/a.js', 'hash1')];
   writeManifest(manifestPath, next);
-  const first = await Deploy.open({ manifests: [manifestPath], path });
+  const first = await Deploy.init({ manifests: [manifestPath], path });
   equal(first.plan().remove.length, 0);
   deepEqual(first.plan().pendingRemove, [
     { source: manifestPath, path: 'dist/old.js', url: '/s/old.js', missedDeploys: 1 },
   ]);
   await first.commit();
 
-  const second = await Deploy.open({ manifests: [manifestPath], path });
+  const second = await Deploy.init({ manifests: [manifestPath], path });
   deepEqual(
     second.plan().remove.map((f) => f.url),
     ['/s/old.js'],
@@ -433,29 +433,29 @@ test('plan with maxMissedDeploys: 1 deletes immediately, : 3 waits', async () =>
   const manifestPath = join(dir.path, 'manifest.json');
   const path = join(dir.path, 'manifest.deploy.json');
   writeManifest(manifestPath, [jsEntry('/s/old.js', 'dist/old.js', 'hashOld')]);
-  await (await Deploy.open({ manifests: [manifestPath], path })).commit();
+  await (await Deploy.init({ manifests: [manifestPath], path })).commit();
   writeManifest(manifestPath, []);
 
-  const immediate = await Deploy.open({
+  const immediate = await Deploy.init({
     manifests: [manifestPath],
     path,
     maxMissedDeploys: 1,
   });
   equal(immediate.plan().remove.length, 1);
 
-  const held = await Deploy.open({ manifests: [manifestPath], path, maxMissedDeploys: 3 });
+  const held = await Deploy.init({ manifests: [manifestPath], path, maxMissedDeploys: 3 });
   equal(held.plan().remove.length, 0);
   deepEqual(held.plan().pendingRemove, [
     { source: manifestPath, path: 'dist/old.js', url: '/s/old.js', missedDeploys: 1 },
   ]);
   await held.commit();
-  const again = await Deploy.open({ manifests: [manifestPath], path, maxMissedDeploys: 3 });
+  const again = await Deploy.init({ manifests: [manifestPath], path, maxMissedDeploys: 3 });
   equal(again.plan().remove.length, 0);
   deepEqual(again.plan().pendingRemove, [
     { source: manifestPath, path: 'dist/old.js', url: '/s/old.js', missedDeploys: 2 },
   ]);
   await again.commit();
-  const last = await Deploy.open({ manifests: [manifestPath], path, maxMissedDeploys: 3 });
+  const last = await Deploy.init({ manifests: [manifestPath], path, maxMissedDeploys: 3 });
   equal(last.plan().remove.length, 1);
 });
 
@@ -465,11 +465,11 @@ test('added manifest source uploads everything, removed source deletes under gra
   const cssPath = join(dir.path, 'css', 'manifest.json');
   const path = join(dir.path, 'manifest.deploy.json');
   writeManifest(jsPath, [jsEntry('/s/a.js', 'a.js', 'hash1')]);
-  await (await Deploy.open({ manifests: [jsPath], path, maxMissedDeploys: 1 })).commit();
+  await (await Deploy.init({ manifests: [jsPath], path, maxMissedDeploys: 1 })).commit();
 
   // New css source appears: all its entries upload, js entry unchanged.
   writeManifest(cssPath, [jsEntry('/s/b.css', 'b.css', 'hashB')]);
-  const added = await Deploy.open({
+  const added = await Deploy.init({
     manifests: [jsPath, cssPath],
     path,
     maxMissedDeploys: 1,
@@ -483,13 +483,13 @@ test('added manifest source uploads everything, removed source deletes under gra
   await added.commit();
 
   // js source disappears: held for one grace cycle, then removed with its own dir.
-  const removed = await Deploy.open({ manifests: [cssPath], path });
+  const removed = await Deploy.init({ manifests: [cssPath], path });
   equal(removed.plan().remove.length, 0);
   deepEqual(removed.plan().pendingRemove, [
     { source: jsPath, path: 'a.js', url: '/s/a.js', missedDeploys: 1 },
   ]);
   await removed.commit();
-  const gone = await Deploy.open({ manifests: [cssPath], path });
+  const gone = await Deploy.init({ manifests: [cssPath], path });
   const removedPlan = gone.plan();
   deepEqual(
     removedPlan.remove.map((f) => f.url),
@@ -516,7 +516,7 @@ test('plan clears pending when the path reappears', async () => {
       prevManifests: [{ source: manifestPath, dir: dir.path, entries: [entry] }],
     }),
   );
-  const deploy = await Deploy.open({ manifests: [manifestPath], path });
+  const deploy = await Deploy.init({ manifests: [manifestPath], path });
   const plan = deploy.plan();
   equal(plan.pendingRemove.length, 0);
   equal(plan.remove.length, 0);
@@ -531,7 +531,7 @@ test('open rejects invalid maxMissedDeploys', async () => {
   for (const maxMissedDeploys of [0, 1.5]) {
     let thrown = false;
     try {
-      await Deploy.open({ manifests: [manifestPath], path, maxMissedDeploys });
+      await Deploy.init({ manifests: [manifestPath], path, maxMissedDeploys });
     } catch (err) {
       thrown = true;
       ok(/maxMissedDeploys/.test((err as Error).message));
@@ -555,7 +555,7 @@ test('commit updates in-memory state for subsequent plans', async () => {
       prevManifests: [{ source: manifestPath, dir: dir.path, entries: [...next, oldEntry] }],
     }),
   );
-  const deploy = await Deploy.open({ manifests: [manifestPath], path });
+  const deploy = await Deploy.init({ manifests: [manifestPath], path });
   // Pending absence graduates to a removal…
   deepEqual(
     deploy.plan().remove.map((f) => f.url),
@@ -614,7 +614,7 @@ test('files carry absolute paths readable from disk', async () => {
   mkdirSync(join(dir.path, 'js', 'dist'), { recursive: true });
   writeFileSync(join(dir.path, 'js', rel), 'hello');
   writeManifest(manifestPath, [jsEntry('/s/a.js', rel, 'hash1')]);
-  const deploy = await Deploy.open({
+  const deploy = await Deploy.init({
     manifests: [manifestPath],
     path: join(dir.path, 'manifest.deploy.json'),
   });
@@ -643,9 +643,9 @@ test('plan remove includes variant rows with the parent', async () => {
       compressed: { br: { path: 'dist/old.js.br', size: 4, sha256: 'brhash' } },
     }),
   ]);
-  await (await Deploy.open({ manifests: [manifestPath], path })).commit();
+  await (await Deploy.init({ manifests: [manifestPath], path })).commit();
   writeManifest(manifestPath, []);
-  const deploy = await Deploy.open({ manifests: [manifestPath], path, maxMissedDeploys: 1 });
+  const deploy = await Deploy.init({ manifests: [manifestPath], path, maxMissedDeploys: 1 });
   deepEqual(
     deploy
       .plan()
@@ -665,12 +665,12 @@ test('plan skips external removals unless external', async () => {
     'hashX',
   );
   writeManifest(manifestPath, [external]);
-  await (await Deploy.open({ manifests: [manifestPath], path })).commit();
+  await (await Deploy.init({ manifests: [manifestPath], path })).commit();
   writeManifest(manifestPath, []);
-  const plan = (await Deploy.open({ manifests: [manifestPath], path, maxMissedDeploys: 1 })).plan();
+  const plan = (await Deploy.init({ manifests: [manifestPath], path, maxMissedDeploys: 1 })).plan();
   equal(plan.remove.length, 0);
   const included = (
-    await Deploy.open({
+    await Deploy.init({
       manifests: [manifestPath],
       path,
       maxMissedDeploys: 1,
@@ -688,9 +688,9 @@ test('commit persists state to the configured path', async () => {
   const manifestPath = join(dir.path, 'manifest.json');
   const target = join(dir.path, 'elsewhere', 'deploy.json');
   writeManifest(manifestPath, [jsEntry('/s/a.js', 'dist/a.js', 'hash1')]);
-  const deploy = await Deploy.open({ manifests: [manifestPath], path: target });
+  const deploy = await Deploy.init({ manifests: [manifestPath], path: target });
   await deploy.commit();
-  const reopened = await Deploy.open({
+  const reopened = await Deploy.init({
     manifests: [manifestPath],
     path: target,
   });

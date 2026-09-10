@@ -172,7 +172,7 @@ import { Deploy } from 'assetcraft/deploy';
 // with different content. One manifest path per build tool; previous
 // manifests are read back from the deploy state, so callers never
 // handle them directly.
-const deploy = await Deploy.open({
+const deploy = await Deploy.init({
   manifests: ['dist/manifest.html.json', 'dist/manifest.js.json'],
   path: 'pub/deploy.json',
 });

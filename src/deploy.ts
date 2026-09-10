@@ -10,7 +10,7 @@
  *
  * Typical cycle:
  * ```ts
- * const deploy = await Deploy.open({
+ * const deploy = await Deploy.init({
  *   manifests: ['dist/manifest.html.json', 'dist/manifest.js.json'],
  *   path: 'pub/deploy.json',
  * });
@@ -80,7 +80,7 @@ export interface DeployPlan {
   readonly unchanged: number;
 }
 
-/** Options for {@link Deploy.open}. */
+/** Options for {@link Deploy.init}. */
 export interface DeployOptions {
   /**
    * Paths to JSON manifest files, one per build tool. Combined in order;
@@ -121,13 +121,13 @@ const COMPRESSED_VARIANTS: Record<CompressFormat, string> = {
 
 /**
  * Deploy — stateful facade over the deploy cycle. Open with
- * {@link Deploy.open}, inspect files with {@link files}, diff with
+ * {@link Deploy.init}, inspect files with {@link files}, diff with
  * {@link plan}, persist with {@link commit}.
  */
 export class Deploy {
   /** Combined entries of all manifests, in order. */
   readonly manifest: Manifest;
-  /** Manifest source paths as passed to {@link Deploy.open}. */
+  /** Manifest source paths as passed to {@link Deploy.init}. */
   readonly manifests: readonly string[];
   /** Deploy-state path. */
   readonly path: string;
@@ -172,7 +172,7 @@ export class Deploy {
    * @throws On missing/invalid manifests, corrupt state, invalid
    *   `maxMissedDeploys`, or immutable URL reuse with different content.
    */
-  static async open(options: DeployOptions): Promise<Deploy> {
+  static async init(options: DeployOptions): Promise<Deploy> {
     if (options.manifests.length === 0) {
       throw new Error('Deploy requires at least one manifest path');
     }
@@ -220,7 +220,7 @@ export class Deploy {
    * Expand the manifests into deployable files: one row per entry plus
    * one row per recorded compressed variant, with absolute disk paths.
    * Manifest order is preserved within each source, sources in the
-   * order passed to {@link open}.
+   * order passed to {@link init}.
    */
   files(): DeployFile[] {
     return this.#loaded.flatMap((l) =>
