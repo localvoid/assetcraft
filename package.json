@@ -40,7 +40,7 @@
     "clean": "rm -rf tsconfig.tsbuildinfo ./dist ./node_modules"
   },
   "devDependencies": {
-    "@types/node": "^26.5.0",
+    "@types/node": "^26.5.1",
     "oxfmt": "^0.67.0",
     "oxlint": "^1.82.0",
     "oxlint-tsgolint": "^7.0.2001",
