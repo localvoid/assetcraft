@@ -6,7 +6,7 @@ import { urlToString } from '../manifest.js';
  * maintains lookup indices.
  */
 export class ManifestBuilder {
-  #entries: Manifest = [];
+  #entries: ManifestEntry[] = [];
   #external: Manifest[] = [];
   #indexByURL = new Map<string, ManifestEntry>();
   #indexByName = new Map<string, ManifestEntry>();

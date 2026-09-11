@@ -223,7 +223,7 @@ export type ManifestEntry =
 /** URL-keyed index of manifest entries. */
 export type ManifestIndex = Record<string, ManifestEntry>;
 /** A manifest is an ordered list of asset entries. */
-export type Manifest = ManifestEntry[];
+export type Manifest = readonly ManifestEntry[];
 
 /** Helpers section */
 
