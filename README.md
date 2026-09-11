@@ -5,7 +5,7 @@ TypeScript toolkit for managing static web assets: content-hashed manifests, com
 - **Manifest** — typed entries for JS, CSS, images, fonts, HTML, WASM, and more, with hashing, SRI, and lookup indices.
 - **Compression** — Brotli, Zstandard, and gzip variants with savings thresholds.
 - **Prune / Diff / Validate** — clean stale hashed files, diff builds, validate JSON manifests.
-- **Deploy** — multi-manifest upload/delete planning with immutable-URL collision protection and deletion grace.
+- **Deploy** — multi-manifest upload/delete planning with immutable-URL collision protection and deletion grace (version skew/deployment drift).
 - **HTTP** — `Cache-Control`, `ETag`, `Content-Encoding`, and `Link: rel=preload` header builders.
 - **File** — hashing, hashed filenames, conditional writes, directory cleaning.
 
@@ -25,8 +25,6 @@ source files
   -> ManifestBuilder.add/upsert (+ import external manifests)
   -> write files + variants to disk, write manifest JSON
   -> pruneDir (delete stale hashed outputs)
-  -> Deploy.init/plan/commit (upload plan.add, delete plan.remove)
-  -> serve with buildResponseHeaders (cache, ETag, encoding, Link)
 ```
 
 Entry `path` is the output-relative disk path. Entry `url` is the public URL (string, or `{ origin, path }` for CDN/external). Immutable entries must never reuse a URL for different content — `ManifestBuilder` and `Deploy` throw on collision.
