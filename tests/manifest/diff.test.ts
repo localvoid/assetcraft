@@ -110,5 +110,3 @@ describe('diffManifests', () => {
     expect(diff.changed[0]?.next).toBe(nextChanged);
   });
 });
-
-
