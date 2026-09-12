@@ -28,13 +28,18 @@ export interface CompressAssetOptions {
   /** Brotli options, merged over the defaults. */
   readonly br?: BrotliOptions;
   /** Zstandard options, merged over the defaults. */
-  readonly zstd?: ZstdOptions;
+  readonly zst?: ZstdOptions;
   /** Gzip options, merged over the defaults. */
-  readonly gzip?: ZlibOptions;
+  readonly gz?: ZlibOptions;
 }
 
-/** Compression format identifiers. These match HTTP `Content-Encoding` values. */
-export type CompressFormat = 'br' | 'zstd' | 'gzip';
+/**
+ * Compression format identifiers. These are file-suffix keys
+ * (`'.' + format` is the on-disk/URL suffix). Use
+ * {@link getContentEncoding} from `./http.js` to get the HTTP
+ * `Content-Encoding` value.
+ */
+export type CompressFormat = 'br' | 'zst' | 'gz';
 
 /** Compressed variants of an asset. Only populated with variants that meet the savings threshold. */
 export type CompressAssetResult = {
@@ -53,8 +58,8 @@ export function compressAssetSync(
     sizeMin = 512,
     sizeMinDiffRatio = 0.1,
     br: brOptions,
-    zstd: zstdOptions,
-    gzip: gzipOptions,
+    zst: zstOptions,
+    gz: gzOptions,
   } = options ?? {};
 
   const buf = typeof content === 'string' ? Buffer.from(content) : content;
@@ -71,14 +76,14 @@ export function compressAssetSync(
     result.br = br;
   }
 
-  const zstd = zstdCompressSync(buf, resolveZstdOptions(zstdOptions));
-  if (zstd.length < sizeThreshold) {
-    result.zstd = zstd;
+  const zst = zstdCompressSync(buf, resolveZstdOptions(zstOptions));
+  if (zst.length < sizeThreshold) {
+    result.zst = zst;
   }
 
-  const gz = gzipSync(buf, resolveGzipOptions(gzipOptions));
+  const gz = gzipSync(buf, resolveGzipOptions(gzOptions));
   if (gz.length < sizeThreshold) {
-    result.gzip = gz;
+    result.gz = gz;
   }
 
   return result;
@@ -109,8 +114,8 @@ export async function compressAsset(
     sizeMin = 512,
     sizeMinDiffRatio = 0.1,
     br: brOptions,
-    zstd: zstdOptions,
-    gzip: gzipOptions,
+    zst: zstOptions,
+    gz: gzOptions,
   } = options ?? {};
 
   const buf = typeof content === 'string' ? Buffer.from(content) : content;
@@ -122,20 +127,20 @@ export async function compressAsset(
   // Threshold: only keep a variant if it saves at least `sizeMinDiffRatio` ratio.
   const sizeThreshold = size * (1 - sizeMinDiffRatio);
 
-  const [br, zstd, gz] = await Promise.all([
+  const [br, zst, gz] = await Promise.all([
     brotliCompressAsync(buf, resolveBrotliOptions(size, brOptions)),
-    zstdCompressAsync(buf, resolveZstdOptions(zstdOptions)),
-    gzipAsync(buf, resolveGzipOptions(gzipOptions)),
+    zstdCompressAsync(buf, resolveZstdOptions(zstOptions)),
+    gzipAsync(buf, resolveGzipOptions(gzOptions)),
   ]);
 
   if (br.length < sizeThreshold) {
     result.br = br;
   }
-  if (zstd.length < sizeThreshold) {
-    result.zstd = zstd;
+  if (zst.length < sizeThreshold) {
+    result.zst = zst;
   }
   if (gz.length < sizeThreshold) {
-    result.gzip = gz;
+    result.gz = gz;
   }
 
   return result;

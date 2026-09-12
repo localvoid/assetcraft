@@ -63,7 +63,11 @@ export interface DeployFile {
   readonly path: string;
   readonly size: number;
   readonly sha256: string;
-  /** Variant encoding for compressed rows, `undefined` for identity. */
+  /**
+   * Variant format for compressed rows, `undefined` for identity.
+   * This is a file-suffix key; use `getContentEncoding()` from
+   * `./http.js` for the HTTP `Content-Encoding` value.
+   */
   readonly encoding: CompressFormat | undefined;
   readonly entry: ManifestEntry;
   /** Unix seconds of the cycle that first deployed this content. */
@@ -139,13 +143,6 @@ export interface PrepareDeployResult {
 
 /** Default history retention for inactive URLs: 365 days, in seconds. */
 const DEFAULT_PURGE_DURATION = 31536000;
-
-/** Compressed variant file suffixes, matching the build pipeline. */
-const COMPRESSED_VARIANTS: Record<CompressFormat, string> = {
-  br: '.br',
-  zstd: '.zst',
-  gzip: '.gz',
-};
 
 /** A manifest snapshot: source path with its resolve directory and entries. */
 export interface ManifestSnapshot {
@@ -763,14 +760,14 @@ function expandEntry(
   ];
   const compressed = entry.compressed;
   if (compressed !== undefined) {
-    for (const format of Object.keys(COMPRESSED_VARIANTS) as CompressFormat[]) {
+    for (const format of Object.keys(compressed) as CompressFormat[]) {
       const variant = compressed[format];
       if (variant !== undefined) {
         rows.push(
           toDeployFile(
             entry,
             source,
-            url + COMPRESSED_VARIANTS[format],
+            `${url}.${format}`,
             join(dir, variant.path),
             variant.size,
             variant.sha256 ?? entry.sha256,

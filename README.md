@@ -95,7 +95,7 @@ Common base fields:
 | `tags?: string[]` | Grouping/filtering |
 | `headers?: Record<string,string>` | Merged last in `buildResponseHeaders`; overrides generated values (except `Link`, which is concatenated) |
 | `integrity?` | SRI string (`sha256-…`/`sha384-…`/`sha512-…`) |
-| `compressed?` | `{ br/zstd/gzip?: { path, size, sha256? } }` |
+| `compressed?` | `{ br/zst/gz?: { path, size, sha256? } }` |
 | `crossorigin?`, `fetchPriority?` | HTML generation hints |
 | `preload?: ManifestPreload[]` | Rendered as `Link: <url>; rel=preload; …` |
 
@@ -128,11 +128,10 @@ const { entry, variants } = await createManifestEntry({
   name: 'style',
   tags: ['app'],
   compress: { sizeMin: 1024, sizeMinDiffRatio: 0.2 },
-  compressSuffixes: { gzip: '.gzip' }, // default br:.br, zstd:.zst, gzip:.gz
   extra: { media: 'screen' },
 });
-// variants: { br?: Buffer, zstd?: Buffer, gzip?: Buffer } — only threshold-passing formats.
-// entry.compressed[format] = { path: entry.path + suffix, size, sha256 }.
+// variants: { br?: Buffer, zst?: Buffer, gz?: Buffer } — only threshold-passing formats.
+// entry.compressed[format] = { path: entry.path + '.' + format, size, sha256 }.
 ```
 
 Type-specific fields go in `extra` (typed as `Omit<ManifestEntryFor<T>, ManagedKeys>`). `compression-dictionary` requires `extra: { match: '*.js', matchDest?: '...' }`. Result always passes `validateManifestEntry`.
@@ -181,7 +180,7 @@ parseManifest(jsonText); // throws on bad JSON / non-array / invalid entries
 isManifestEntryType(type); // type guard
 ```
 
-Enforced: non-empty `mime`/`path`/`url`, base64url `sha256` (no `+`/`/`/`=`), non-negative integer `size`, SRI format, `compressed` keys limited to `br|zstd|gzip`, `match` for `compression-dictionary`.
+Enforced: non-empty `mime`/`path`/`url`, base64url `sha256` (no `+`/`/`/`=`), non-negative integer `size`, SRI format, `compressed` keys limited to `br|zst|gz`, `match` for `compression-dictionary`.
 
 ## Diff: `assetcraft/manifest/diff`
 
@@ -224,18 +223,18 @@ const variants = await compressAsset(content, {
   sizeMin: 512, // default: skip smaller inputs
   sizeMinDiffRatio: 0.1, // default: keep variant only if < 90% of original
   br: { params: {/* overrides; default max quality, TEXT mode, size hint */} },
-  zstd: { params: {/* overrides; default level 22, btultra2 */} },
-  gzip: { level: 9 }, // default best compression
+  zst: { params: {/* overrides; default level 22, btultra2 */} },
+  gz: { level: 9 }, // default best compression
 });
-// variants: { br?: Buffer, zstd?: Buffer, gzip?: Buffer }
+// variants: { br?: Buffer, zst?: Buffer, gz?: Buffer }
 const sync = compressAssetSync(content, { sizeMin: 2048 });
 ```
 
-`CompressFormat = 'br' | 'zstd' | 'gzip'` matches HTTP `Content-Encoding`.
+`CompressFormat = 'br' | 'zst' | 'gz'` are file-suffix keys (`'.' + format`); `getContentEncoding(format)` in `assetcraft/http` maps them to HTTP `Content-Encoding` (`br`→`br`, `zst`→`zstd`, `gz`→`gzip`).
 
 ## Deploy: `assetcraft/deploy`
 
-Single-call `prepareDeploy`: one manifest path per build tool; previous manifests are restored from deploy state, so callers never pass them directly. The full embed set (current + grace-retained entries) is returned in-memory — never re-read the state file.
+`prepareDeploy`: one manifest path per build tool; previous manifests are restored from deploy state, so callers never pass them directly. The full embed set (current + grace-retained entries) is returned in-memory — never re-read the state file.
 
 ```ts
 import { prepareDeploy } from 'assetcraft/deploy';
@@ -251,7 +250,7 @@ const { plan, embed, snapshots, deployedAt } = await prepareDeploy({
 
 for (const file of plan.add) {
   // file: { url, path (absolute), size, sha256, encoding, entry, deployedAt, source }
-  // encoding: undefined (identity) | 'br' | 'zstd' | 'gzip'
+  // encoding: undefined (identity) | 'br' | 'zst' | 'gz'
   // deployedAt: unix seconds of the cycle that first deployed this content
   // upload file.path -> file.url (+ Content-Encoding when encoding set)
 }
@@ -274,12 +273,13 @@ Details:
 Http helpers for dev servers and deploy pipelines. Production servers should precompile headers before deployment.
 
 ```ts
-import { buildResponseHeaders, getCacheControl, getETag } from 'assetcraft/http';
+import { buildResponseHeaders, getCacheControl, getContentEncoding, getETag } from 'assetcraft/http';
 
 getCacheControl(entry); // immutable: public, max-age=31536000, immutable
 // mutable: public, max-age=0, must-revalidate
 // options: { immutableMaxAge?, mutableMaxAge? }
 getETag(entry); // `"<sha256>"`, compare against If-None-Match directly
+getContentEncoding('zst'); // 'zstd' (br→br, gz→gzip)
 
 const headers = buildResponseHeaders(entry, {
   cacheControl: true, // default true
@@ -295,15 +295,15 @@ const headers = buildResponseHeaders(entry, {
 Preloads (`ManifestPreload { url, as?, crossorigin?, fetchPriority?, media? }`):
 
 ```ts
-import { formatLinkHeader, formatPreloadLink, getPreloadAs } from 'assetcraft/http';
+import { getLinkHeader, getPreloadLink, getPreloadAs } from 'assetcraft/http';
 
 getPreloadAs('js'); // script | style | font | image | audio | video | document | fetch | undefined
-formatPreloadLink('/fonts/body.woff2', { as: 'font' });
+getPreloadLink('/fonts/body.woff2', { as: 'font' });
 // </fonts/body.woff2>; rel=preload; as=font; crossorigin=anonymous (font default)
-formatLinkHeader(entry.preload); // joined with ", ", undefined when empty
+getLinkHeader(entry.preload); // joined with ", ", undefined when empty
 ```
 
-Serving flow: pick encoding from `Accept-Encoding` among `entry.compressed` keys, pass it to `buildResponseHeaders`, stream `entry.path` (identity) or `entry.compressed[encoding].path` with the returned headers. Do not hand-write `Link` in `entry.headers` when `preload` already covers it.
+Serving flow: map `Accept-Encoding` (`br`/`zstd`/`gzip`) to `entry.compressed` keys (`br`/`zst`/`gz`), pass the key to `buildResponseHeaders` (which emits the correct `Content-Encoding` via `getContentEncoding`), stream `entry.path` (identity) or `entry.compressed[encoding].path` with the returned headers. Do not hand-write `Link` in `entry.headers` when `preload` already covers it.
 
 ## File utilities: `assetcraft/file`
 
@@ -345,7 +345,7 @@ formatFileSize(1536); // '1.50KB'
 | `assetcraft/manifest/prune` | `pruneDir`, `collectManifestPaths`, `PruneOptions` |
 | `assetcraft/compress` | `compressAsset`, `compressAssetSync`, `CompressAssetOptions/Result`, `CompressFormat` |
 | `assetcraft/deploy` | `prepareDeploy`, `PrepareDeployOptions/Result`, `DeployPlan/File`, `DeployHistoryEntry`, `PendingRemoval`, `ManifestSnapshot` |
-| `assetcraft/http` | `getCacheControl`, `getETag`, `getPreloadAs`, `formatPreloadLink`, `formatLinkHeader`, `buildResponseHeaders` + option types |
+| `assetcraft/http` | `getCacheControl`, `getContentEncoding`, `getETag`, `getPreloadAs`, `getPreloadLink`, `getLinkHeader`, `buildResponseHeaders` + option types |
 | `assetcraft/file` | Hashing, naming, `updateFile`, cleaning, path helpers, `formatFileSize` |
 
 ## Commands

@@ -29,7 +29,7 @@ const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
 const INTEGRITY_RE = /^sha(256|384|512)-[A-Za-z0-9+/]+={0,2}$/;
 
 /** Known compression-variant keys of `compressed`. */
-const COMPRESSED_FORMATS: ReadonlySet<string> = new Set(['br', 'zstd', 'gzip']);
+const COMPRESSED_FORMATS: ReadonlySet<string> = new Set(['br', 'zst', 'gz']);
 
 /**
  * Validate a single manifest entry. Returns a list of human-readable
@@ -187,7 +187,7 @@ function validatePreloads(preload: unknown): string[] {
 /** Validate the `compressed` variants record. */
 function validateCompressed(compressed: unknown): string[] {
   if (typeof compressed !== 'object' || compressed === null || Array.isArray(compressed)) {
-    return ['compressed must be an object keyed by format (br, zstd, gzip)'];
+    return ['compressed must be an object keyed by format (br, zst, gz)'];
   }
   const errors: string[] = [];
   for (const [format, variant] of Object.entries(compressed as Record<string, unknown>)) {

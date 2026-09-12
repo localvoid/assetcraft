@@ -3,11 +3,12 @@ import { describe, expect, test } from 'bun:test';
 import type { ManifestJSEntry } from '../src/manifest.js';
 import {
   buildResponseHeaders,
-  formatLinkHeader,
-  formatPreloadLink,
   getCacheControl,
+  getContentEncoding,
   getETag,
+  getLinkHeader,
   getPreloadAs,
+  getPreloadLink,
 } from '../src/http.js';
 
 function mkEntry(overrides: Partial<ManifestJSEntry> = {}): ManifestJSEntry {
@@ -47,8 +48,17 @@ describe('buildResponseHeaders', () => {
     expect(headers['Content-Length']).toBe('40');
   });
 
+  test('maps format keys to Content-Encoding values', () => {
+    const zst = mkEntry({ compressed: { zst: { path: 'app.js.zst', size: 30 } } });
+    expect(buildResponseHeaders(zst, { encoding: 'zst' })['Content-Encoding']).toBe('zstd');
+    const gz = mkEntry({ compressed: { gz: { path: 'app.js.gz', size: 50 } } });
+    const gzHeaders = buildResponseHeaders(gz, { encoding: 'gz' });
+    expect(gzHeaders['Content-Encoding']).toBe('gzip');
+    expect(gzHeaders['Content-Length']).toBe('50');
+  });
+
   test('falls back to entry size when the variant is untracked', () => {
-    const headers = buildResponseHeaders(mkEntry(), { encoding: 'gzip' });
+    const headers = buildResponseHeaders(mkEntry(), { encoding: 'gz' });
     expect(headers['Content-Length']).toBe('128');
   });
 
@@ -113,63 +123,71 @@ describe('getPreloadAs', () => {
   });
 });
 
-describe('formatPreloadLink', () => {
+describe('getContentEncoding', () => {
+  test('maps format keys to Content-Encoding values', () => {
+    expect(getContentEncoding('br')).toBe('br');
+    expect(getContentEncoding('zst')).toBe('zstd');
+    expect(getContentEncoding('gz')).toBe('gzip');
+  });
+});
+
+describe('getPreloadLink', () => {
   test('renders a bare preload link', () => {
-    expect(formatPreloadLink('/assets/hero.png')).toBe('</assets/hero.png>; rel=preload');
+    expect(getPreloadLink('/assets/hero.png')).toBe('</assets/hero.png>; rel=preload');
   });
 
   test('resolves as from the entry type with explicit as winning', () => {
-    expect(formatPreloadLink('/assets/hero.png', undefined, 'image')).toBe(
+    expect(getPreloadLink('/assets/hero.png', undefined, 'image')).toBe(
       '</assets/hero.png>; rel=preload; as=image',
     );
-    expect(formatPreloadLink('/assets/hero.png', { as: 'fetch' }, 'image')).toBe(
+    expect(getPreloadLink('/assets/hero.png', { as: 'fetch' }, 'image')).toBe(
       '</assets/hero.png>; rel=preload; as=fetch',
     );
   });
 
   test('defaults font crossorigin to anonymous', () => {
-    expect(formatPreloadLink('/fonts/body.woff2', { as: 'font' })).toBe(
+    expect(getPreloadLink('/fonts/body.woff2', { as: 'font' })).toBe(
       '</fonts/body.woff2>; rel=preload; as=font; crossorigin=anonymous',
     );
     expect(
-      formatPreloadLink('/fonts/body.woff2', { as: 'font', crossorigin: 'use-credentials' }),
+      getPreloadLink('/fonts/body.woff2', { as: 'font', crossorigin: 'use-credentials' }),
     ).toBe('</fonts/body.woff2>; rel=preload; as=font; crossorigin=use-credentials');
   });
 
   test('renders fetchpriority and media', () => {
     expect(
-      formatPreloadLink('https://cdn.example.com/hero.avif', {
+      getPreloadLink('https://cdn.example.com/hero.avif', {
         as: 'image',
         fetchPriority: 'high',
       }),
     ).toBe('<https://cdn.example.com/hero.avif>; rel=preload; as=image; fetchpriority=high');
-    expect(formatPreloadLink('/print.css', { as: 'style', media: 'print' })).toBe(
+    expect(getPreloadLink('/print.css', { as: 'style', media: 'print' })).toBe(
       '</print.css>; rel=preload; as=style; media=print',
     );
   });
 
   test('quotes media containing delimiters or whitespace', () => {
-    expect(formatPreloadLink('/a.css', { media: 'screen and (max-width: 600px)' })).toBe(
+    expect(getPreloadLink('/a.css', { media: 'screen and (max-width: 600px)' })).toBe(
       '</a.css>; rel=preload; media="screen and (max-width: 600px)"',
     );
-    expect(formatPreloadLink('/a.css', { media: 'a;b' })).toBe(
+    expect(getPreloadLink('/a.css', { media: 'a;b' })).toBe(
       '</a.css>; rel=preload; media="a;b"',
     );
-    expect(formatPreloadLink('/a.css', { media: 'a"b\\c' })).toBe(
+    expect(getPreloadLink('/a.css', { media: 'a"b\\c' })).toBe(
       '</a.css>; rel=preload; media="a\\"b\\\\c"',
     );
   });
 });
 
-describe('formatLinkHeader', () => {
+describe('getLinkHeader', () => {
   test('returns undefined for missing or empty preloads', () => {
-    expect(formatLinkHeader(undefined)).toBeUndefined();
-    expect(formatLinkHeader([])).toBeUndefined();
+    expect(getLinkHeader(undefined)).toBeUndefined();
+    expect(getLinkHeader([])).toBeUndefined();
   });
 
   test('joins preload links with ", "', () => {
     expect(
-      formatLinkHeader([
+      getLinkHeader([
         { url: '/assets/hero.png', as: 'image' },
         { url: '/fonts/body.woff2', as: 'font' },
       ]),

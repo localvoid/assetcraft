@@ -36,19 +36,6 @@ type ManagedKeys =
   | 'fetchPriority'
   | 'preload';
 
-/** Filename suffix per compression format for on-disk variants. */
-export interface CompressSuffixes {
-  readonly br?: string;
-  readonly zstd?: string;
-  readonly gzip?: string;
-}
-
-const DEFAULT_SUFFIXES: Required<CompressSuffixes> = {
-  br: '.br',
-  zstd: '.zst',
-  gzip: '.gz',
-};
-
 /** Options for {@link createManifestEntry}. */
 export interface CreateManifestEntryOptions<T extends ManifestEntryType = ManifestEntryType> {
   /** Asset type discriminant. */
@@ -89,8 +76,6 @@ export interface CreateManifestEntryOptions<T extends ManifestEntryType = Manife
    * `true` uses default thresholds; an object tunes them. Default false.
    */
   readonly compress?: boolean | CompressAssetOptions;
-  /** Filename suffixes for compressed variants. */
-  readonly compressSuffixes?: CompressSuffixes;
   /** CORS mode hint for HTML tag generation. */
   readonly crossorigin?: ManifestBaseEntry<T>['crossorigin'];
   /** Fetch-priority hint for HTML tag generation. */
@@ -176,9 +161,6 @@ export async function createManifestEntry<T extends ManifestEntryType>(
   let variants: CompressAssetResult | undefined;
   if (options.compress) {
     variants = await compressAsset(bytes, options.compress === true ? undefined : options.compress);
-    const suffixes = options.compressSuffixes
-      ? { ...DEFAULT_SUFFIXES, ...options.compressSuffixes }
-      : DEFAULT_SUFFIXES;
     const formats = Object.keys(variants) as CompressFormat[];
     if (formats.length > 0) {
       const compressed: ManifestCompressedVariants = {};
@@ -186,7 +168,7 @@ export async function createManifestEntry<T extends ManifestEntryType>(
       for (const format of formats) {
         const data = variants[format]!;
         compressed[format] = {
-          path: path + suffixes[format],
+          path: `${path}.${format}`,
           size: data.length,
           sha256: calculateHash(data),
         };

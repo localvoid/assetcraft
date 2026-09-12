@@ -62,7 +62,7 @@ describe('createManifestEntry', () => {
     });
     expect(Object.keys(variants).length).toBeGreaterThan(0);
     expect(entry.compressed).toBeDefined();
-    const suffixes = { br: '.br', zstd: '.zst', gzip: '.gz' } as const;
+    const suffixes = { br: '.br', zst: '.zst', gz: '.gz' } as const;
     for (const [format, data] of Object.entries(variants)) {
       const key = format as keyof typeof suffixes;
       const meta = entry.compressed?.[key];
@@ -73,7 +73,7 @@ describe('createManifestEntry', () => {
     expect(validateManifestEntry(entry)).toEqual([]);
   });
 
-  test('supports custom hash length and suffixes', async () => {
+  test('supports custom hash length', async () => {
     const { entry, variants } = await createManifestEntry({
       type: 'text',
       mime: 'application/json',
@@ -81,12 +81,11 @@ describe('createManifestEntry', () => {
       path: 'data/strings.json',
       pathHash: 8,
       compress: true,
-      compressSuffixes: { gzip: '.gzip' },
       extra: { charset: 'utf-8' },
     });
     expect(entry.path).toMatch(/^data\/strings-[A-Za-z0-9_-]{8}\.json$/);
-    if (variants.gzip !== undefined) {
-      expect(entry.compressed?.gzip?.path).toBe(`${entry.path}.gzip`);
+    if (variants.gz !== undefined) {
+      expect(entry.compressed?.gz?.path).toBe(`${entry.path}.gz`);
     }
     expect(validateManifestEntry(entry)).toEqual([]);
   });

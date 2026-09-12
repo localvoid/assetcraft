@@ -31,11 +31,11 @@ export interface ManifestCompressedVariant {
   sha256?: string;
 }
 
-/** Compressed variants of an asset, keyed by HTTP `Content-Encoding` name. */
+/** Compressed variants of an asset, keyed by format (`'.' + key` is the file suffix). */
 export interface ManifestCompressedVariants {
   br?: ManifestCompressedVariant;
-  zstd?: ManifestCompressedVariant;
-  gzip?: ManifestCompressedVariant;
+  zst?: ManifestCompressedVariant;
+  gz?: ManifestCompressedVariant;
 }
 
 /** Candidate of a responsive image (`srcset` entry). */
@@ -50,7 +50,7 @@ export interface ManifestImageCandidate {
 
 /**
  * A single resource to preload when serving the entry. Renders as one
- * `Link: <url>; rel=preload; …` header value (see `formatPreloadLink` in
+ * `Link: <url>; rel=preload; …` header value (see `getPreloadLink` in
  * `assetcraft/http`).
  */
 export interface ManifestPreload {
@@ -102,7 +102,7 @@ export interface ManifestBaseEntry<T extends ManifestEntryType> {
   /**
    * Resources to preload when serving this entry, in order. Each renders
    * as one `Link: <url>; rel=preload; …` header value (see
-   * `formatPreloadLink` / `buildResponseHeaders` in `assetcraft/http`).
+   * `getPreloadLink` / `buildResponseHeaders` in `assetcraft/http`).
    */
   preload?: ManifestPreload[];
 }

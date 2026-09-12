@@ -150,7 +150,7 @@ describe('pruneDir', () => {
       'old.js': 'old',
     });
     const entry = mkEntry('app-hash.js');
-    entry.compressed = { zstd: { path: 'app-hash.js.zst', size: 3, sha256: 'abc' } };
+    entry.compressed = { zst: { path: 'app-hash.js.zst', size: 3, sha256: 'abc' } };
     await pruneDir(dir, [entry]);
     expect(await pathExists(join(dir, 'app-hash.js.zst'))).toBe(true);
     expect(await pathExists(join(dir, 'old.js'))).toBe(false);

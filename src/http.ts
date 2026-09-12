@@ -7,6 +7,21 @@
 import type { CompressFormat } from './compress.js';
 import type { ManifestEntry, ManifestEntryType, ManifestPreload } from './manifest.js';
 
+/** HTTP `Content-Encoding` value for a {@link CompressFormat}. */
+export type CompressContentEncoding = 'br' | 'zstd' | 'gzip';
+
+/** Map a compression format key to its HTTP `Content-Encoding` value. */
+export function getContentEncoding(format: CompressFormat): CompressContentEncoding {
+  switch (format) {
+    case 'zst':
+      return 'zstd';
+    case 'gz':
+      return 'gzip';
+    default:
+      return 'br';
+  }
+}
+
 /** Options for {@link getCacheControl}. */
 export interface CacheControlOptions {
   /** max-age for immutable assets (default 31536000 = 1 year). */
@@ -47,7 +62,7 @@ export interface ResponseHeadersOptions {
   readonly etag?: boolean;
   /** `Link` header from `entry.preload`. Default: true */
   readonly link?: boolean;
-  /** Compression format of the variant being served (adds Content-Encoding + Vary). */
+  /** Compression format of the variant being served (mapped to Content-Encoding + Vary). */
   readonly encoding?: CompressFormat;
   /**
    * Size of the variant being served. Used for Content-Length when
@@ -88,7 +103,7 @@ export function getPreloadAs(type: ManifestEntryType): string | undefined {
   }
 }
 
-/** Per-resource `Link` params for {@link formatPreloadLink}. */
+/** Per-resource `Link` params for {@link getPreloadLink}. */
 export type PreloadLinkOptions = Pick<
   ManifestPreload,
   'as' | 'crossorigin' | 'fetchPriority' | 'media'
@@ -107,7 +122,7 @@ function quoteLinkMedia(media: string): string {
  * `options.as` wins; otherwise `as` is resolved from `type` (if given).
  * `crossorigin` defaults to `anonymous` for fonts.
  */
-export function formatPreloadLink(
+export function getPreloadLink(
   target: string,
   options?: PreloadLinkOptions,
   type?: ManifestEntryType,
@@ -134,13 +149,13 @@ export function formatPreloadLink(
  * Format the `Link` header value for a list of preloads (joined with
  * `', '`). Returns `undefined` when there is nothing to preload.
  */
-export function formatLinkHeader(
+export function getLinkHeader(
   preloads: readonly ManifestPreload[] | undefined,
 ): string | undefined {
   if (preloads === undefined || preloads.length === 0) {
     return undefined;
   }
-  return preloads.map((preload) => formatPreloadLink(preload.url, preload)).join(', ');
+  return preloads.map((preload) => getPreloadLink(preload.url, preload)).join(', ');
 }
 
 /**
@@ -168,10 +183,10 @@ export function buildResponseHeaders(
     headers['ETag'] = getETag(entry);
   }
   if (options?.encoding !== undefined) {
-    headers['Content-Encoding'] = options.encoding;
+    headers['Content-Encoding'] = getContentEncoding(options.encoding);
     headers['Vary'] = 'Accept-Encoding';
   }
-  const preloadLink = options?.link === false ? undefined : formatLinkHeader(entry.preload);
+  const preloadLink = options?.link === false ? undefined : getLinkHeader(entry.preload);
   if (entry.headers !== undefined) {
     for (const [k, v] of Object.entries(entry.headers)) {
       if (k === 'Link' && preloadLink !== undefined) {

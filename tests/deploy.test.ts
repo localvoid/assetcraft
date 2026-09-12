@@ -583,7 +583,7 @@ test('embed expands identity + variant rows with timestamps', async () => {
     headers: { 'Cache-Control': 'immutable' },
     compressed: {
       br: { path: 'dist/a.js.br', size: 5, sha256: 'brhash' },
-      gzip: { path: 'dist/a.js.gz', size: 6, sha256: 'gzhash' },
+      gz: { path: 'dist/a.js.gz', size: 6, sha256: 'gzhash' },
     },
   });
   const result = await prepareSingle(dir.path, [entry], { now: 1000 });
@@ -598,7 +598,7 @@ test('embed expands identity + variant rows with timestamps', async () => {
   equal(files[1]?.path, join(dir.path, 'dist', 'a.js.br'));
   equal(files[1]?.encoding, 'br');
   equal(files[2]?.url, '/s/a.js.gz');
-  equal(files[2]?.encoding, 'gzip');
+  equal(files[2]?.encoding, 'gz');
   for (const file of files) {
     equal(file.deployedAt, 1000);
   }
