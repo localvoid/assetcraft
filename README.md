@@ -235,36 +235,39 @@ const sync = compressAssetSync(content, { sizeMin: 2048 });
 
 ## Deploy: `assetcraft/deploy`
 
-Stateful `init -> plan -> commit` cycle. One manifest path per build tool; previous manifests are restored from deploy state, so callers never pass them directly.
+Single-call `prepareDeploy`: one manifest path per build tool; previous manifests are restored from deploy state, so callers never pass them directly. The full embed set (current + grace-retained entries) is returned in-memory — never re-read the state file.
 
 ```ts
-import { Deploy } from 'assetcraft/deploy';
+import { prepareDeploy } from 'assetcraft/deploy';
 
-const deploy = await Deploy.init({
+const { plan, embed, snapshots, deployedAt } = await prepareDeploy({
   manifests: ['dist/manifest.html.json', 'dist/manifest.js.json'],
-  path: 'pub/deploy.json', // state sidecar (history + pending + snapshots)
+  path: 'pub/deploy.json', // state sidecar (history + pending + snapshots + deployedAt)
   maxMissedDeploys: 2, // default 2; 1 = delete immediately
-  external: false, // default: skip { origin, path } entries in files()/plan
+  external: false, // default: skip { origin, path } entries in plan/embed
   purgeDuration: 31536000, // default 365d history retention for inactive URLs, seconds
+  now: Math.floor(Date.now() / 1000), // default: current unix seconds
 });
 
-for (const file of deploy.plan().add) {
-  // file: { url, path (absolute), size, sha256, encoding, entry }
+for (const file of plan.add) {
+  // file: { url, path (absolute), size, sha256, encoding, entry, deployedAt, source }
   // encoding: undefined (identity) | 'br' | 'zstd' | 'gzip'
+  // deployedAt: unix seconds of the cycle that first deployed this content
   // upload file.path -> file.url (+ Content-Encoding when encoding set)
 }
-for (const file of deploy.plan().remove) {
+for (const file of plan.remove) {
   // delete file.url
 }
-await deploy.commit(); // persist history/pending/snapshots; returns the plan
+// embed: plan-independent full set to serve/bundle (current + retained),
+// with absolute paths; snapshots: exactly what was persisted as prevManifests.
 ```
 
 Details:
 
-- `files()` expands identity + recorded `entry.compressed` variants. Variant URLs are `url + .br/.zst/.gz`. Paths resolve against each manifest's own directory. Sources combine in `manifests` order; same relative `path` in different manifests stays distinct (keyed by source + path); URLs share one global history namespace.
-- `plan()` is pure/dry-runnable: `{ add, remove, pendingRemove, unchanged }`. First deploy uploads everything. Hash-changed paths upload; metadata-only changes do not. Removals wait `maxMissedDeploys` consecutive missing cycles (survives one stale-HTML window), reappearing paths self-heal, removed manifest sources drain under the same grace.
-- `commit()` records immutable URLs into history, advances pending removals, snapshots manifests, and writes state via `updateFile` (parents created, no-op when unchanged). Safe to call `plan()` again after `commit` on the same instance.
-- Safety: missing state = first deploy; corrupt state, missing/invalid manifest, duplicate manifest path, bad `maxMissedDeploys`, or immutable URL reuse with different `sha256` all throw (`Hash collision detected ...`). Mutable entries are ignored by history. Object URLs are history-tracked but excluded from `files()`/`plan()` unless `external: true`.
+- `embed` expands identity + recorded `entry.compressed` variants. Variant URLs are `url + .br/.zst/.gz`. Paths resolve against each manifest's own directory. Sources combine in `manifests` order; same relative `path` in different manifests stays distinct (keyed by source + path); URLs share one global history namespace. Snapshot `dir` is resolve-only: retargeting it (e.g. at a bundle dir) never affects diffing.
+- `plan` is `{ add, remove, pendingRemove, unchanged }`. First deploy uploads everything. Hash-changed paths upload; metadata-only changes do not. Removals wait `maxMissedDeploys` consecutive missing cycles (survives one stale-HTML window), reappearing paths self-heal, removed manifest sources drain under the same grace.
+- `deployedAt` stamps new content with `now` and carries the original timestamp for unchanged/retained content (persisted per source + path).
+- Safety: missing state = first deploy; corrupt state, missing/invalid manifest, duplicate manifest path, bad `maxMissedDeploys`/`now`, or immutable URL reuse with different `sha256` all throw (`Hash collision detected ...`). Mutable entries are ignored by history. Object URLs are history-tracked but excluded from `plan`/`embed` unless `external: true`.
 
 ## Serving: `assetcraft/http`
 
@@ -341,7 +344,7 @@ formatFileSize(1536); // '1.50KB'
 | `assetcraft/manifest/diff` | `diffManifests`, `ManifestDiff`, `ManifestChangedEntry` |
 | `assetcraft/manifest/prune` | `pruneDir`, `collectManifestPaths`, `PruneOptions` |
 | `assetcraft/compress` | `compressAsset`, `compressAssetSync`, `CompressAssetOptions/Result`, `CompressFormat` |
-| `assetcraft/deploy` | `Deploy`, `DeployOptions/Plan/File`, `DeployHistoryEntry`, `PendingRemoval` |
+| `assetcraft/deploy` | `prepareDeploy`, `PrepareDeployOptions/Result`, `DeployPlan/File`, `DeployHistoryEntry`, `PendingRemoval`, `ManifestSnapshot` |
 | `assetcraft/http` | `getCacheControl`, `getETag`, `getPreloadAs`, `formatPreloadLink`, `formatLinkHeader`, `buildResponseHeaders` + option types |
 | `assetcraft/file` | Hashing, naming, `updateFile`, cleaning, path helpers, `formatFileSize` |
 

@@ -6,7 +6,8 @@ import { mkdtempDisposable } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { Deploy } from '../src/deploy.js';
+import type { PrepareDeployOptions } from '../src/deploy.js';
+import { prepareDeploy } from '../src/deploy.js';
 import { urlToString } from '../src/manifest.js';
 
 function jsEntry(
@@ -32,17 +33,18 @@ function writeManifest(path: string, manifest: Manifest): void {
   writeFileSync(path, JSON.stringify(manifest));
 }
 
-/** Open a single object manifest with a temp-dir sidecar. */
-function openSingle(
+/** Run a single-manifest deploy cycle with a temp-dir sidecar. */
+function prepareSingle(
   dir: string,
   manifest: Manifest,
-  options?: { maxMissedDeploys?: number; external?: boolean },
-): Promise<Deploy> {
+  options?: Partial<PrepareDeployOptions> & { now?: number },
+): Promise<Awaited<ReturnType<typeof prepareDeploy>>> {
   const manifestPath = join(dir, 'manifest.json');
   writeManifest(manifestPath, manifest);
-  return Deploy.init({
+  return prepareDeploy({
     manifests: [manifestPath],
     path: join(dir, 'manifest.deploy.json'),
+    now: 1000,
     ...options,
   });
 }
@@ -55,12 +57,12 @@ test('urlToString handles string and object urls', () => {
   );
 });
 
-test('open rejects empty or duplicate manifests', async () => {
+test('prepareDeploy rejects empty or duplicate manifests', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
   const path = join(dir.path, 'manifest.deploy.json');
-  await Deploy.init({ manifests: [], path }).then(
+  await prepareDeploy({ manifests: [], path }).then(
     () => {
-      throw new Error('expected open to throw');
+      throw new Error('expected prepareDeploy to throw');
     },
     (err) => {
       ok(/at least one manifest path/.test((err as Error).message));
@@ -68,9 +70,9 @@ test('open rejects empty or duplicate manifests', async () => {
   );
   const manifestPath = join(dir.path, 'manifest.json');
   writeManifest(manifestPath, []);
-  await Deploy.init({ manifests: [manifestPath, manifestPath], path }).then(
+  await prepareDeploy({ manifests: [manifestPath, manifestPath], path }).then(
     () => {
-      throw new Error('expected open to throw');
+      throw new Error('expected prepareDeploy to throw');
     },
     (err) => {
       ok(/Duplicate manifest/.test((err as Error).message));
@@ -78,36 +80,41 @@ test('open rejects empty or duplicate manifests', async () => {
   );
 });
 
-test('open combines multiple manifests in order', async () => {
+test('prepareDeploy combines multiple manifests in order', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
   const htmlPath = join(dir.path, 'html-manifest.json');
   const jsPath = join(dir.path, 'js-manifest.json');
   writeManifest(htmlPath, [jsEntry('/index.html', 'index.html', 'hashH')]);
   writeManifest(jsPath, [jsEntry('/s/a.js', 'a.js', 'hash1'), jsEntry('/s/b.js', 'b.js', 'hash2')]);
-  const deploy = await Deploy.init({
+  const result = await prepareDeploy({
     manifests: [htmlPath, jsPath],
     path: join(dir.path, 'manifest.deploy.json'),
+    now: 1000,
   });
-  deepEqual(deploy.manifests, [htmlPath, jsPath]);
-  equal(deploy.manifest.length, 3);
   deepEqual(
-    deploy.files().map((f) => f.url),
+    result.snapshots.map((s) => s.source),
+    [htmlPath, jsPath],
+  );
+  equal(result.embed.length, 3);
+  deepEqual(
+    result.embed.map((f) => f.url),
     ['/index.html', '/s/a.js', '/s/b.js'],
   );
 });
 
-test('files resolves each manifest directory', async () => {
+test('embed resolves each manifest directory', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
   const htmlPath = join(dir.path, 'html', 'manifest.json');
   const jsPath = join(dir.path, 'js', 'manifest.json');
   writeManifest(htmlPath, [jsEntry('/index.html', 'index.html', 'hashH')]);
   writeManifest(jsPath, [jsEntry('/s/a.js', 'a.js', 'hash1')]);
-  const deploy = await Deploy.init({
+  const result = await prepareDeploy({
     manifests: [htmlPath, jsPath],
     path: join(dir.path, 'manifest.deploy.json'),
+    now: 1000,
   });
   deepEqual(
-    deploy.files().map((f) => f.path),
+    result.embed.map((f) => f.path),
     [join(dir.path, 'html', 'index.html'), join(dir.path, 'js', 'a.js')],
   );
 });
@@ -119,35 +126,35 @@ test('same relative path in different manifests stays distinct', async () => {
   writeManifest(firstPath, [jsEntry('/one.js', 'app.js', 'hash1')]);
   writeManifest(secondPath, [jsEntry('/two.js', 'app.js', 'hash2')]);
   const path = join(dir.path, 'manifest.deploy.json');
-  const first = await Deploy.init({ manifests: [firstPath, secondPath], path });
-  equal(first.plan().add.length, 2);
-  await first.commit();
-  const second = await Deploy.init({ manifests: [firstPath, secondPath], path });
-  const plan = second.plan();
+  const first = await prepareDeploy({ manifests: [firstPath, secondPath], path, now: 1000 });
+  equal(first.plan.add.length, 2);
+  const second = await prepareDeploy({ manifests: [firstPath, secondPath], path, now: 2000 });
+  const plan = second.plan;
   equal(plan.add.length, 0);
   equal(plan.unchanged, 2);
-  deepEqual(
-    second
-      .files()
-      .map((f) => f.path)
-      .sort(),
-    [join(dir.path, 'first', 'app.js'), join(dir.path, 'second', 'app.js')],
-  );
+  deepEqual(second.embed.map((f) => f.path).sort(), [
+    join(dir.path, 'first', 'app.js'),
+    join(dir.path, 'second', 'app.js'),
+  ]);
+  // Unchanged content keeps its original timestamp.
+  for (const file of second.embed) {
+    equal(file.deployedAt, 1000);
+  }
 });
 
-test('open passes on same url+hash, throws on reuse', async () => {
+test('same url+hash passes, reuse with different content throws', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
   const manifest = [jsEntry('/s/a.js', 'dist/a.js', 'hash1')];
-  await (await openSingle(dir.path, manifest)).commit();
+  await prepareSingle(dir.path, manifest, { now: 1000 });
   // Same url+hash reopens cleanly.
-  await openSingle(dir.path, manifest);
+  await prepareSingle(dir.path, manifest, { now: 2000 });
   // Same url with different content collides.
-  const path = join(dir.path, 'manifest.deploy.json');
   const manifestPath = join(dir.path, 'manifest.json');
+  const path = join(dir.path, 'manifest.deploy.json');
   writeManifest(manifestPath, [jsEntry('/s/a.js', 'dist/a.js', 'hash2')]);
-  await Deploy.init({ manifests: [manifestPath], path }).then(
+  await prepareDeploy({ manifests: [manifestPath], path, now: 3000 }).then(
     () => {
-      throw new Error('expected open to throw');
+      throw new Error('expected prepareDeploy to throw');
     },
     (err) => {
       ok(/Hash collision/.test((err as Error).message));
@@ -155,25 +162,22 @@ test('open passes on same url+hash, throws on reuse', async () => {
   );
 });
 
-test('open validates against persisted history', async () => {
+test('history enforced against persisted state', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
   const manifestPath = join(dir.path, 'manifest.json');
   const path = join(dir.path, 'manifest.deploy.json');
-  writeManifest(manifestPath, [jsEntry('/s/a.js', 'dist/a.js', 'hash1')]);
-  writeFileSync(
-    path,
-    JSON.stringify({ history: [{ url: '/s/a.js', sha256: 'hash1' }], pending: [] }),
-  );
-  const deploy = await Deploy.init({ manifests: [manifestPath], path });
-  equal(deploy.manifest.length, 1);
+  const manifest = [jsEntry('/s/a.js', 'dist/a.js', 'hash1')];
+  writeManifest(manifestPath, manifest);
+  const first = await prepareDeploy({ manifests: [manifestPath], path, now: 1000 });
+  equal(first.embed.length, 1);
 
-  writeFileSync(
-    path,
-    JSON.stringify({ history: [{ url: '/s/a.js', sha256: 'other' }], pending: [] }),
-  );
-  await Deploy.init({ manifests: [manifestPath], path }).then(
+  // Tamper the history hash: next cycle must throw.
+  const state = JSON.parse(readFileSync(path, 'utf8')) as { history: { sha256: string }[] };
+  state.history[0]!.sha256 = 'other';
+  writeFileSync(path, JSON.stringify(state));
+  await prepareDeploy({ manifests: [manifestPath], path, now: 2000 }).then(
     () => {
-      throw new Error('expected open to throw');
+      throw new Error('expected prepareDeploy to throw');
     },
     (err) => {
       ok(/Hash collision/.test((err as Error).message));
@@ -181,9 +185,9 @@ test('open validates against persisted history', async () => {
   );
 
   writeManifest(manifestPath, 'not a manifest' as never);
-  await Deploy.init({ manifests: [manifestPath], path }).then(
+  await prepareDeploy({ manifests: [manifestPath], path, now: 2000 }).then(
     () => {
-      throw new Error('expected open to throw');
+      throw new Error('expected prepareDeploy to throw');
     },
     (err) => {
       ok(/Invalid manifest/.test((err as Error).message));
@@ -191,14 +195,15 @@ test('open validates against persisted history', async () => {
   );
 });
 
-test('open throws on missing manifest file', async () => {
+test('prepareDeploy throws on missing manifest file', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
-  await Deploy.init({
+  await prepareDeploy({
     manifests: [join(dir.path, 'missing.json')],
     path: join(dir.path, 'manifest.deploy.json'),
+    now: 1000,
   }).then(
     () => {
-      throw new Error('expected open to throw');
+      throw new Error('expected prepareDeploy to throw');
     },
     (err) => {
       ok(/Invalid manifest.*file not found/.test((err as Error).message));
@@ -206,45 +211,43 @@ test('open throws on missing manifest file', async () => {
   );
 });
 
-test('open covers object urls with origin-scoped keys', async () => {
+test('object urls use origin-scoped history keys', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
   const entry = jsEntry(
     { origin: 'https://cdn.example', path: '/s/a.js' } as never,
     'dist/a.js',
     'hash1',
   );
-
-  const path = join(dir.path, 'manifest.deploy.json');
   const manifestPath = join(dir.path, 'manifest.json');
   writeManifest(manifestPath, [entry]);
-  writeFileSync(
-    path,
-    JSON.stringify({
-      history: [{ url: 'https://cdn.example/s/a.js', sha256: 'hash1' }],
-      pending: [],
-    }),
-  );
-  await Deploy.init({ manifests: [manifestPath], path });
-  // A same-path URL on another origin is a different key — no collision.
-  writeFileSync(
-    path,
-    JSON.stringify({
-      history: [{ url: 'https://other.example/s/a.js', sha256: 'other' }],
-      pending: [],
-    }),
-  );
-  await Deploy.init({ manifests: [manifestPath], path });
+
+  // Default: external entries excluded from plan/embed but history-tracked.
+  const skipped = await prepareSingle(dir.path, [entry], { now: 1000 });
+  equal(skipped.plan.add.length, 0);
+  equal(skipped.embed.length, 0);
+
+  // Same-path URL on another origin is a different key — no collision.
+  const path = join(dir.path, 'manifest.deploy.json');
+  const state = JSON.parse(readFileSync(path, 'utf8')) as {
+    history: { url: string; sha256: string }[];
+  };
+  const historyUrl = state.history[0]!.url;
+  equal(historyUrl, 'https://cdn.example/s/a.js');
+  state.history[0]!.url = 'https://other.example/s/a.js';
+  writeFileSync(path, JSON.stringify(state));
+  await prepareDeploy({ manifests: [manifestPath], path, now: 2000 });
+
   // Same origin + path with different content collides.
-  writeFileSync(
-    path,
-    JSON.stringify({
-      history: [{ url: 'https://cdn.example/s/a.js', sha256: 'other' }],
-      pending: [],
-    }),
-  );
-  await Deploy.init({ manifests: [manifestPath], path }).then(
+  const state2 = JSON.parse(readFileSync(path, 'utf8')) as {
+    history: { url: string; sha256: string }[];
+  };
+  const tracked = state2.history.find((h) => h.url === 'https://cdn.example/s/a.js');
+  ok(tracked !== undefined);
+  tracked.sha256 = 'other';
+  writeFileSync(path, JSON.stringify(state2));
+  await prepareDeploy({ manifests: [manifestPath], path, now: 3000 }).then(
     () => {
-      throw new Error('expected open to throw');
+      throw new Error('expected prepareDeploy to throw');
     },
     (err) => {
       ok(/Hash collision/.test((err as Error).message));
@@ -252,30 +255,33 @@ test('open covers object urls with origin-scoped keys', async () => {
   );
 });
 
-test('open ignores mutable entries', async () => {
+test('mutable entries ignored by history', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
-  const path = join(dir.path, 'manifest.deploy.json');
-  writeFileSync(
-    path,
-    JSON.stringify({ history: [{ url: '/s/a.js', sha256: 'hash1' }], pending: [] }),
+  const first = await prepareSingle(dir.path, [jsEntry('/s/a.js', 'dist/a.js', 'hash1')], {
+    now: 1000,
+  });
+  equal(first.plan.add.length, 1);
+  // Same URL, different content, mutable: no collision.
+  const second = await prepareSingle(
+    dir.path,
+    [{ ...jsEntry('/s/a.js', 'dist/a.js', 'hash2'), immutable: false }],
+    { now: 2000 },
   );
-  const manifestPath = join(dir.path, 'manifest.json');
-  writeManifest(manifestPath, [{ ...jsEntry('/s/a.js', 'dist/a.js', 'hash2'), immutable: false }]);
-  await Deploy.init({ manifests: [manifestPath], path });
+  equal(second.plan.add.length, 1);
 });
 
-test('open treats missing state as first deploy, throws on corrupt', async () => {
+test('missing state is a first deploy, corrupt state throws', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
   const manifestPath = join(dir.path, 'manifest.json');
   const path = join(dir.path, 'manifest.deploy.json');
   writeManifest(manifestPath, [jsEntry('/s/a.js', 'dist/a.js', 'hash1')]);
-  const deploy = await Deploy.init({ manifests: [manifestPath], path });
-  equal(deploy.plan().add.length, 1);
+  const first = await prepareDeploy({ manifests: [manifestPath], path, now: 1000 });
+  equal(first.plan.add.length, 1);
 
   writeFileSync(path, 'corrupt');
-  await Deploy.init({ manifests: [manifestPath], path }).then(
+  await prepareDeploy({ manifests: [manifestPath], path, now: 2000 }).then(
     () => {
-      throw new Error('expected open to throw');
+      throw new Error('expected prepareDeploy to throw');
     },
     (err) => {
       ok(/Invalid deploy state/.test((err as Error).message));
@@ -283,79 +289,73 @@ test('open treats missing state as first deploy, throws on corrupt', async () =>
   );
 });
 
-test('open rejects invalid deploy state shapes', async () => {
+test('prepareDeploy rejects invalid deploy state shapes', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
   const manifestPath = join(dir.path, 'manifest.json');
   const path = join(dir.path, 'manifest.deploy.json');
   writeManifest(manifestPath, []);
-  const cases: Array<[string, RegExp]> = [
-    ['[]', /expected a JSON object/],
-    ['{"history":{}}', /history must be an array/],
-    ['{"history":[{"url":"/s/a.js"}]}', /string url\/hash/],
-    ['{"pending":{}}', /pending must be an array/],
-    ['{"pending":[{"path":"a","url":"u","missedDeploys":0}]}', /positive integer missedDeploys/],
+  const entry = jsEntry('/s/a.js', 'dist/a.js', 'hash1');
+  const valid = {
+    history: [],
+    pending: [],
+    prevManifests: [{ source: manifestPath, dir: dir.path, entries: [entry] }],
+    deployedAt: { [manifestPath]: { 'dist/a.js': 1000 } },
+  };
+  const cases: Array<[string, RegExp, (v: typeof valid) => unknown]> = [
+    ['missing history', /history must be an array/, (v) => ({ ...v, history: {} })],
+    ['bad history entry', /string url\/hash/, (v) => ({ ...v, history: [{ url: '/s/a.js' }] })],
+    ['missing pending', /pending must be an array/, (v) => ({ ...v, pending: {} })],
     [
-      '{"pending":[{"path":"a","url":"u","missedDeploys":1,"source":7}]}',
-      /positive integer missedDeploys/,
+      'bad pending item',
+      /string source\/path\/url/,
+      (v) => ({ ...v, pending: [{ path: 'a', url: 'u', missedDeploys: 0 }] }),
     ],
-    ['{"prevManifests":{}}', /prevManifests must be an array/],
-    ['{"prevManifests":[{}]}', /string source\/dir/],
     [
-      '{"prevManifests":[{"source":"m.json","dir":".","entries":[{"type":"nope"}]}]}',
+      'pending without source',
+      /string source\/path\/url/,
+      (v) => ({ ...v, pending: [{ path: 'a', url: 'u', missedDeploys: 1 }] }),
+    ],
+    ['missing snapshots', /prevManifests must be an array/, (v) => ({ ...v, prevManifests: {} })],
+    ['bad snapshot', /string source\/dir/, (v) => ({ ...v, prevManifests: [{}] })],
+    [
+      'invalid snapshot entry',
       /prev manifest 'm\.json' is invalid/,
+      (v) => ({
+        ...v,
+        prevManifests: [{ source: 'm.json', dir: '.', entries: [{ type: 'nope' }] }],
+      }),
+    ],
+    ['missing deployedAt', /deployedAt must be an object/, (v) => ({ ...v, deployedAt: [] })],
+    [
+      'bad deployedAt value',
+      /unix seconds/,
+      (v) => ({ ...v, deployedAt: { [manifestPath]: { 'dist/a.js': 'now' } } }),
     ],
   ];
-  for (const [body, re] of cases) {
-    writeFileSync(path, body);
-    await Deploy.init({ manifests: [manifestPath], path }).then(
+  for (const [label, re, mutate] of cases) {
+    writeFileSync(path, JSON.stringify(mutate(valid)));
+    await prepareDeploy({ manifests: [manifestPath], path, now: 2000 }).then(
       () => {
-        throw new Error(`expected open to throw for ${body}`);
+        throw new Error(`expected prepareDeploy to throw for ${label}`);
       },
       (err) => {
-        ok(re.test((err as Error).message), `${body}: ${(err as Error).message}`);
+        ok(re.test((err as Error).message), `${label}: ${(err as Error).message}`);
       },
     );
   }
-  writeFileSync(path, '{}');
-  const deploy = await Deploy.init({ manifests: [manifestPath], path });
-  equal(deploy.plan().add.length, 0);
 });
 
-test('state without prevManifests uploads everything, keeps history', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
-  const manifestPath = join(dir.path, 'manifest.json');
-  const path = join(dir.path, 'manifest.deploy.json');
-  const manifest: Manifest = [jsEntry('/s/a.js', 'dist/a.js', 'hash1')];
-  writeManifest(manifestPath, manifest);
-  // Legacy shape: no prevManifests, pending without source.
-  writeFileSync(
-    path,
-    JSON.stringify({
-      history: [{ url: '/s/a.js', sha256: 'hash1' }],
-      pending: [{ path: 'dist/old.js', url: '/s/old.js', missedDeploys: 1 }],
-    }),
-  );
-  const deploy = await Deploy.init({ manifests: [manifestPath], path });
-  const plan = deploy.plan();
-  equal(plan.add.length, 1);
-  equal(plan.remove.length, 0);
-  // Unattributed pending can't match a snapshot: flushed on commit.
-  await deploy.commit();
-  const reopened = await Deploy.init({ manifests: [manifestPath], path });
-  equal(reopened.plan().pendingRemove.length, 0);
-  equal(reopened.plan().unchanged, 1);
-});
-
-test('commit stores prevManifests snapshots', async () => {
+test('result snapshots match persisted state', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
   const htmlPath = join(dir.path, 'html', 'manifest.json');
   const jsPath = join(dir.path, 'js', 'manifest.json');
   const path = join(dir.path, 'manifest.deploy.json');
   writeManifest(htmlPath, [jsEntry('/index.html', 'index.html', 'hashH')]);
   writeManifest(jsPath, [jsEntry('/s/a.js', 'a.js', 'hash1')]);
-  await (await Deploy.init({ manifests: [htmlPath, jsPath], path })).commit();
+  const result = await prepareDeploy({ manifests: [htmlPath, jsPath], path, now: 1000 });
   const state = JSON.parse(readFileSync(path, 'utf8')) as {
     prevManifests: Array<{ source: string; dir: string; entries: Manifest }>;
+    deployedAt: Record<string, Record<string, number>>;
   };
   deepEqual(
     state.prevManifests.map((r) => r.source),
@@ -367,19 +367,24 @@ test('commit stores prevManifests snapshots', async () => {
   );
   equal(state.prevManifests[0]?.entries.length, 1);
   equal(state.prevManifests[1]?.entries.length, 1);
+  deepEqual(result.snapshots, state.prevManifests);
+  deepEqual(state.deployedAt, { [htmlPath]: { 'index.html': 1000 }, [jsPath]: { 'a.js': 1000 } });
+  equal(result.deployedAt, 1000);
 });
 
-test('second cycle needs no prev input', async () => {
+test('second cycle uploads nothing without reread', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
   const manifestPath = join(dir.path, 'manifest.json');
   const path = join(dir.path, 'manifest.deploy.json');
   writeManifest(manifestPath, [jsEntry('/s/a.js', 'dist/a.js', 'hash1')]);
-  await (await Deploy.init({ manifests: [manifestPath], path })).commit();
-  const deploy = await Deploy.init({ manifests: [manifestPath], path });
-  const plan = deploy.plan();
-  equal(plan.add.length, 0);
-  equal(plan.remove.length, 0);
-  equal(plan.unchanged, 1);
+  await prepareDeploy({ manifests: [manifestPath], path, now: 1000 });
+  const deploy = await prepareDeploy({ manifests: [manifestPath], path, now: 2000 });
+  equal(deploy.plan.add.length, 0);
+  equal(deploy.plan.remove.length, 0);
+  equal(deploy.plan.unchanged, 1);
+  equal(deploy.embed.length, 1);
+  // Content unchanged: original deploy timestamp carried over.
+  equal(deploy.embed[0]?.deployedAt, 1000);
 });
 
 test('plan uploads added + hash-changed, keeps metadata-only', async () => {
@@ -390,7 +395,7 @@ test('plan uploads added + hash-changed, keeps metadata-only', async () => {
     jsEntry('/s/a.js', 'dist/a.js', 'hash1'),
     jsEntry('/s/b.js', 'dist/b.js', 'hashB'),
   ]);
-  await (await Deploy.init({ manifests: [manifestPath], path })).commit();
+  await prepareDeploy({ manifests: [manifestPath], path, now: 1000 });
   // Content change ships under a new hashed URL (same-URL reuse is forbidden);
   // headers-only edits upload nothing.
   writeManifest(manifestPath, [
@@ -398,9 +403,12 @@ test('plan uploads added + hash-changed, keeps metadata-only', async () => {
     { ...jsEntry('/s/b.js', 'dist/b.js', 'hashB'), headers: { 'x-new': '1' } },
     jsEntry('/s/c.js', 'dist/c.js', 'hashC'),
   ]);
-  const plan = (await Deploy.init({ manifests: [manifestPath], path })).plan();
-  deepEqual(plan.add.map((f) => f.url).sort(), ['/s/a-h2.js', '/s/c.js']);
-  equal(plan.unchanged, 0);
+  const result = await prepareDeploy({ manifests: [manifestPath], path, now: 2000 });
+  deepEqual(result.plan.add.map((f) => f.url).sort(), ['/s/a-h2.js', '/s/c.js']);
+  equal(result.plan.unchanged, 0);
+  for (const file of result.plan.add) {
+    equal(file.deployedAt, 2000);
+  }
 });
 
 test('plan holds removals for maxMissedDeploys then deletes', async () => {
@@ -409,23 +417,27 @@ test('plan holds removals for maxMissedDeploys then deletes', async () => {
   const path = join(dir.path, 'manifest.deploy.json');
   const oldEntry = jsEntry('/s/old.js', 'dist/old.js', 'hashOld');
   writeManifest(manifestPath, [oldEntry, jsEntry('/s/a.js', 'dist/a.js', 'hash1')]);
-  await (await Deploy.init({ manifests: [manifestPath], path })).commit();
+  await prepareDeploy({ manifests: [manifestPath], path, now: 1000 });
 
   const next: Manifest = [jsEntry('/s/a.js', 'dist/a.js', 'hash1')];
   writeManifest(manifestPath, next);
-  const first = await Deploy.init({ manifests: [manifestPath], path });
-  equal(first.plan().remove.length, 0);
-  deepEqual(first.plan().pendingRemove, [
+  const first = await prepareDeploy({ manifests: [manifestPath], path, now: 2000 });
+  equal(first.plan.remove.length, 0);
+  deepEqual(first.plan.pendingRemove, [
     { source: manifestPath, path: 'dist/old.js', url: '/s/old.js', missedDeploys: 1 },
   ]);
-  await first.commit();
+  // Grace-retained entry is part of the in-memory embed set (no reread).
+  deepEqual(first.embed.map((f) => f.url).sort(), ['/s/a.js', '/s/old.js']);
+  const retained = first.embed.find((f) => f.url === '/s/old.js');
+  equal(retained?.deployedAt, 1000);
 
-  const second = await Deploy.init({ manifests: [manifestPath], path });
+  const second = await prepareDeploy({ manifests: [manifestPath], path, now: 3000 });
   deepEqual(
-    second.plan().remove.map((f) => f.url),
+    second.plan.remove.map((f) => f.url),
     ['/s/old.js'],
   );
-  equal(second.plan().pendingRemove.length, 0);
+  equal(second.plan.pendingRemove.length, 0);
+  equal(second.embed.length, 1);
 });
 
 test('plan with maxMissedDeploys: 1 deletes immediately, : 3 waits', async () => {
@@ -433,30 +445,53 @@ test('plan with maxMissedDeploys: 1 deletes immediately, : 3 waits', async () =>
   const manifestPath = join(dir.path, 'manifest.json');
   const path = join(dir.path, 'manifest.deploy.json');
   writeManifest(manifestPath, [jsEntry('/s/old.js', 'dist/old.js', 'hashOld')]);
-  await (await Deploy.init({ manifests: [manifestPath], path })).commit();
+  await prepareDeploy({ manifests: [manifestPath], path, now: 1000 });
   writeManifest(manifestPath, []);
 
-  const immediate = await Deploy.init({
+  const immediate = await prepareDeploy({
     manifests: [manifestPath],
     path,
     maxMissedDeploys: 1,
+    now: 2000,
   });
-  equal(immediate.plan().remove.length, 1);
+  equal(immediate.plan.remove.length, 1);
+});
 
-  const held = await Deploy.init({ manifests: [manifestPath], path, maxMissedDeploys: 3 });
-  equal(held.plan().remove.length, 0);
-  deepEqual(held.plan().pendingRemove, [
+test('maxMissedDeploys: 3 waits two cycles', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
+  const manifestPath = join(dir.path, 'manifest.json');
+  const path = join(dir.path, 'manifest.deploy.json');
+  writeManifest(manifestPath, [jsEntry('/s/old.js', 'dist/old.js', 'hashOld')]);
+  await prepareDeploy({ manifests: [manifestPath], path, now: 1000 });
+  writeManifest(manifestPath, []);
+
+  const held = await prepareDeploy({
+    manifests: [manifestPath],
+    path,
+    maxMissedDeploys: 3,
+    now: 2000,
+  });
+  equal(held.plan.remove.length, 0);
+  deepEqual(held.plan.pendingRemove, [
     { source: manifestPath, path: 'dist/old.js', url: '/s/old.js', missedDeploys: 1 },
   ]);
-  await held.commit();
-  const again = await Deploy.init({ manifests: [manifestPath], path, maxMissedDeploys: 3 });
-  equal(again.plan().remove.length, 0);
-  deepEqual(again.plan().pendingRemove, [
+  const again = await prepareDeploy({
+    manifests: [manifestPath],
+    path,
+    maxMissedDeploys: 3,
+    now: 3000,
+  });
+  equal(again.plan.remove.length, 0);
+  deepEqual(again.plan.pendingRemove, [
     { source: manifestPath, path: 'dist/old.js', url: '/s/old.js', missedDeploys: 2 },
   ]);
-  await again.commit();
-  const last = await Deploy.init({ manifests: [manifestPath], path, maxMissedDeploys: 3 });
-  equal(last.plan().remove.length, 1);
+  const last = await prepareDeploy({
+    manifests: [manifestPath],
+    path,
+    maxMissedDeploys: 3,
+    now: 4000,
+  });
+  equal(last.plan.remove.length, 1);
 });
 
 test('added manifest source uploads everything, removed source deletes under grace', async () => {
@@ -465,65 +500,59 @@ test('added manifest source uploads everything, removed source deletes under gra
   const cssPath = join(dir.path, 'css', 'manifest.json');
   const path = join(dir.path, 'manifest.deploy.json');
   writeManifest(jsPath, [jsEntry('/s/a.js', 'a.js', 'hash1')]);
-  await (await Deploy.init({ manifests: [jsPath], path, maxMissedDeploys: 1 })).commit();
+  await prepareDeploy({ manifests: [jsPath], path, maxMissedDeploys: 1, now: 1000 });
 
   // New css source appears: all its entries upload, js entry unchanged.
   writeManifest(cssPath, [jsEntry('/s/b.css', 'b.css', 'hashB')]);
-  const added = await Deploy.init({
+  const added = await prepareDeploy({
     manifests: [jsPath, cssPath],
     path,
     maxMissedDeploys: 1,
+    now: 2000,
   });
-  const addedPlan = added.plan();
   deepEqual(
-    addedPlan.add.map((f) => f.url),
+    added.plan.add.map((f) => f.url),
     ['/s/b.css'],
   );
-  equal(addedPlan.unchanged, 1);
-  await added.commit();
+  equal(added.plan.unchanged, 1);
 
   // js source disappears: held for one grace cycle, then removed with its own dir.
-  const removed = await Deploy.init({ manifests: [cssPath], path });
-  equal(removed.plan().remove.length, 0);
-  deepEqual(removed.plan().pendingRemove, [
+  const removed = await prepareDeploy({ manifests: [cssPath], path, now: 3000 });
+  equal(removed.plan.remove.length, 0);
+  deepEqual(removed.plan.pendingRemove, [
     { source: jsPath, path: 'a.js', url: '/s/a.js', missedDeploys: 1 },
   ]);
-  await removed.commit();
-  const gone = await Deploy.init({ manifests: [cssPath], path });
-  const removedPlan = gone.plan();
+  const gone = await prepareDeploy({ manifests: [cssPath], path, now: 4000 });
   deepEqual(
-    removedPlan.remove.map((f) => f.url),
+    gone.plan.remove.map((f) => f.url),
     ['/s/a.js'],
   );
   deepEqual(
-    removedPlan.remove.map((f) => f.path),
+    gone.plan.remove.map((f) => f.path),
     [join(dir.path, 'js', 'a.js')],
   );
-  equal(removedPlan.unchanged, 1);
+  equal(gone.plan.unchanged, 1);
 });
 
 test('plan clears pending when the path reappears', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
   const manifestPath = join(dir.path, 'manifest.json');
   const path = join(dir.path, 'manifest.deploy.json');
-  const entry = jsEntry('/s/old.js', 'dist/old.js', 'hashOld');
-  writeManifest(manifestPath, [entry]);
-  writeFileSync(
-    path,
-    JSON.stringify({
-      history: [],
-      pending: [{ source: manifestPath, path: 'dist/old.js', url: '/s/old.js', missedDeploys: 1 }],
-      prevManifests: [{ source: manifestPath, dir: dir.path, entries: [entry] }],
-    }),
-  );
-  const deploy = await Deploy.init({ manifests: [manifestPath], path });
-  const plan = deploy.plan();
-  equal(plan.pendingRemove.length, 0);
-  equal(plan.remove.length, 0);
-  equal(plan.unchanged, 1);
+  writeManifest(manifestPath, [jsEntry('/s/old.js', 'dist/old.js', 'hashOld')]);
+  await prepareDeploy({ manifests: [manifestPath], path, now: 1000 });
+  writeManifest(manifestPath, []);
+  const held = await prepareDeploy({ manifests: [manifestPath], path, now: 2000 });
+  equal(held.plan.pendingRemove.length, 1);
+  // Path reappears with identical content: self-heals, keeps original timestamp.
+  writeManifest(manifestPath, [jsEntry('/s/old.js', 'dist/old.js', 'hashOld')]);
+  const healed = await prepareDeploy({ manifests: [manifestPath], path, now: 3000 });
+  equal(healed.plan.pendingRemove.length, 0);
+  equal(healed.plan.remove.length, 0);
+  equal(healed.plan.unchanged, 1);
+  equal(healed.embed[0]?.deployedAt, 1000);
 });
 
-test('open rejects invalid maxMissedDeploys', async () => {
+test('prepareDeploy rejects invalid maxMissedDeploys and now', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
   const manifestPath = join(dir.path, 'manifest.json');
   const path = join(dir.path, 'manifest.deploy.json');
@@ -531,45 +560,24 @@ test('open rejects invalid maxMissedDeploys', async () => {
   for (const maxMissedDeploys of [0, 1.5]) {
     let thrown = false;
     try {
-      await Deploy.init({ manifests: [manifestPath], path, maxMissedDeploys });
+      await prepareDeploy({ manifests: [manifestPath], path, maxMissedDeploys, now: 1000 });
     } catch (err) {
       thrown = true;
       ok(/maxMissedDeploys/.test((err as Error).message));
     }
-    ok(thrown, `expected open to throw for maxMissedDeploys ${maxMissedDeploys}`);
+    ok(thrown, `expected prepareDeploy to throw for maxMissedDeploys ${maxMissedDeploys}`);
   }
+  let thrown = false;
+  try {
+    await prepareDeploy({ manifests: [manifestPath], path, now: 1.5 });
+  } catch (err) {
+    thrown = true;
+    ok(/now/.test((err as Error).message));
+  }
+  ok(thrown, 'expected prepareDeploy to throw for non-integer now');
 });
 
-test('commit updates in-memory state for subsequent plans', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
-  const manifestPath = join(dir.path, 'manifest.json');
-  const path = join(dir.path, 'manifest.deploy.json');
-  const next: Manifest = [jsEntry('/s/a.js', 'dist/a.js', 'hash1')];
-  const oldEntry = jsEntry('/s/old.js', 'dist/old.js', 'hashOld');
-  writeManifest(manifestPath, next);
-  writeFileSync(
-    path,
-    JSON.stringify({
-      history: [],
-      pending: [{ source: manifestPath, path: 'dist/old.js', url: '/s/old.js', missedDeploys: 1 }],
-      prevManifests: [{ source: manifestPath, dir: dir.path, entries: [...next, oldEntry] }],
-    }),
-  );
-  const deploy = await Deploy.init({ manifests: [manifestPath], path });
-  // Pending absence graduates to a removal…
-  deepEqual(
-    deploy.plan().remove.map((f) => f.url),
-    ['/s/old.js'],
-  );
-  await deploy.commit();
-  // …and the same instance sees the commit: nothing left to remove.
-  const again = deploy.plan();
-  equal(again.remove.length, 0);
-  equal(again.pendingRemove.length, 0);
-  equal(again.unchanged, 1);
-});
-
-test('files expands identity + variant rows', async () => {
+test('embed expands identity + variant rows with timestamps', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
   const entry = jsEntry('/s/a.js', 'dist/a.js', 'hash1', {
     headers: { 'Cache-Control': 'immutable' },
@@ -578,47 +586,50 @@ test('files expands identity + variant rows', async () => {
       gzip: { path: 'dist/a.js.gz', size: 6, sha256: 'gzhash' },
     },
   });
-  const deploy = await openSingle(dir.path, [entry]);
-  const files = deploy.files();
+  const result = await prepareSingle(dir.path, [entry], { now: 1000 });
+  const files = result.embed;
   equal(files.length, 3);
   equal(files[0]?.url, '/s/a.js');
   equal(files[0]?.encoding, undefined);
   equal(files[0]?.entry.mime, 'application/javascript');
   equal(files[0]?.entry.immutable, true);
   deepEqual(files[0]?.entry.headers, { 'Cache-Control': 'immutable' });
-  ok(files[0]?.entry === deploy.manifest[0]);
   equal(files[1]?.url, '/s/a.js.br');
   equal(files[1]?.path, join(dir.path, 'dist', 'a.js.br'));
   equal(files[1]?.encoding, 'br');
   equal(files[2]?.url, '/s/a.js.gz');
   equal(files[2]?.encoding, 'gzip');
+  for (const file of files) {
+    equal(file.deployedAt, 1000);
+  }
 });
 
-test('files skips object urls unless external', async () => {
+test('embed skips object urls unless external', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
   const entry = jsEntry(
     { origin: 'https://cdn.example', path: '/s/a.js' } as never,
     'dist/a.js',
     'hash1',
   );
-  equal((await openSingle(dir.path, [entry])).files().length, 0);
-  const included = await openSingle(dir.path, [entry], { external: true });
-  equal(included.files().length, 1);
-  equal(included.files()[0]?.url, 'https://cdn.example/s/a.js');
+  equal((await prepareSingle(dir.path, [entry], { now: 1000 })).embed.length, 0);
+  const included = await prepareSingle(dir.path, [entry], { external: true, now: 2000 });
+  equal(included.embed.length, 1);
+  equal(included.embed[0]?.url, 'https://cdn.example/s/a.js');
 });
 
-test('files carry absolute paths readable from disk', async () => {
+test('embed carries absolute paths readable from disk', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
   const manifestPath = join(dir.path, 'js', 'manifest.json');
   const rel = join('dist', 'a.js');
   mkdirSync(join(dir.path, 'js', 'dist'), { recursive: true });
   writeFileSync(join(dir.path, 'js', rel), 'hello');
   writeManifest(manifestPath, [jsEntry('/s/a.js', rel, 'hash1')]);
-  const deploy = await Deploy.init({
+  const result = await prepareDeploy({
     manifests: [manifestPath],
     path: join(dir.path, 'manifest.deploy.json'),
+    now: 1000,
   });
-  const [file] = deploy.files();
+  const [file] = result.embed;
   ok(file !== undefined);
   equal(readFileSync(file.path, 'utf8'), 'hello');
   equal(dirname(file.path), join(dir.path, 'js', 'dist'));
@@ -626,12 +637,14 @@ test('files carry absolute paths readable from disk', async () => {
 
 test('plan uploads everything on first deploy', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
-  const deploy = await openSingle(dir.path, [jsEntry('/s/a.js', 'dist/a.js', 'hash1')]);
-  const plan = deploy.plan();
-  equal(plan.add.length, 1);
-  equal(plan.remove.length, 0);
-  equal(plan.pendingRemove.length, 0);
-  equal(plan.unchanged, 0);
+  const result = await prepareSingle(dir.path, [jsEntry('/s/a.js', 'dist/a.js', 'hash1')], {
+    now: 1000,
+  });
+  equal(result.plan.add.length, 1);
+  equal(result.plan.remove.length, 0);
+  equal(result.plan.pendingRemove.length, 0);
+  equal(result.plan.unchanged, 0);
+  equal(result.embed.length, 1);
 });
 
 test('plan remove includes variant rows with the parent', async () => {
@@ -643,16 +656,15 @@ test('plan remove includes variant rows with the parent', async () => {
       compressed: { br: { path: 'dist/old.js.br', size: 4, sha256: 'brhash' } },
     }),
   ]);
-  await (await Deploy.init({ manifests: [manifestPath], path })).commit();
+  await prepareDeploy({ manifests: [manifestPath], path, now: 1000 });
   writeManifest(manifestPath, []);
-  const deploy = await Deploy.init({ manifests: [manifestPath], path, maxMissedDeploys: 1 });
-  deepEqual(
-    deploy
-      .plan()
-      .remove.map((f) => f.url)
-      .sort(),
-    ['/s/old.js', '/s/old.js.br'],
-  );
+  const result = await prepareDeploy({
+    manifests: [manifestPath],
+    path,
+    maxMissedDeploys: 1,
+    now: 2000,
+  });
+  deepEqual(result.plan.remove.map((f) => f.url).sort(), ['/s/old.js', '/s/old.js.br']);
 });
 
 test('plan skips external removals unless external', async () => {
@@ -665,34 +677,78 @@ test('plan skips external removals unless external', async () => {
     'hashX',
   );
   writeManifest(manifestPath, [external]);
-  await (await Deploy.init({ manifests: [manifestPath], path })).commit();
+  await prepareDeploy({ manifests: [manifestPath], path, now: 1000 });
   writeManifest(manifestPath, []);
-  const plan = (await Deploy.init({ manifests: [manifestPath], path, maxMissedDeploys: 1 })).plan();
+  // maxMissedDeploys: 2 so the intermediate cycle holds the entry under
+  // grace (every call persists; a :1 cycle would flush it immediately).
+  const plan = (
+    await prepareDeploy({ manifests: [manifestPath], path, maxMissedDeploys: 2, now: 2000 })
+  ).plan;
   equal(plan.remove.length, 0);
   const included = (
-    await Deploy.init({
+    await prepareDeploy({
       manifests: [manifestPath],
       path,
-      maxMissedDeploys: 1,
+      maxMissedDeploys: 2,
       external: true,
+      now: 3000,
     })
-  ).plan();
+  ).plan;
   deepEqual(
     included.remove.map((f) => f.url),
     ['https://cdn.example/s/x.js'],
   );
 });
 
-test('commit persists state to the configured path', async () => {
+test('embed rows carry source, current/retained partition, skippedExternal', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
+  const manifestPath = join(dir.path, 'manifest.json');
+  const path = join(dir.path, 'manifest.deploy.json');
+  const external = jsEntry(
+    { origin: 'https://cdn.example', path: '/s/x.js' } as never,
+    'dist/x.js',
+    'hashX',
+  );
+  writeManifest(manifestPath, [
+    jsEntry('/s/a.js', 'dist/a.js', 'hash1'),
+    jsEntry('/s/old.js', 'dist/old.js', 'hashOld'),
+    external,
+  ]);
+  const first = await prepareDeploy({ manifests: [manifestPath], path, now: 1000 });
+  equal(first.skippedExternal, 1);
+  deepEqual(first.embed.map((f) => f.url).sort(), ['/s/a.js', '/s/old.js']);
+  for (const file of first.embed) {
+    equal(file.source, manifestPath);
+  }
+  deepEqual(first.retained, []);
+  equal(first.current.length, first.embed.length);
+
+  writeManifest(manifestPath, [jsEntry('/s/a.js', 'dist/a.js', 'hash1'), external]);
+  const second = await prepareDeploy({ manifests: [manifestPath], path, now: 2000 });
+  equal(second.skippedExternal, 1);
+  deepEqual(
+    second.current.map((f) => f.url),
+    ['/s/a.js'],
+  );
+  deepEqual(
+    second.retained.map((f) => f.url),
+    ['/s/old.js'],
+  );
+  deepEqual(second.embed.map((f) => f.url).sort(), ['/s/a.js', '/s/old.js']);
+  equal(second.retained[0]?.deployedAt, 1000);
+  equal(second.retained[0]?.source, manifestPath);
+});
+
+test('prepareDeploy persists state to the configured path', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
   const manifestPath = join(dir.path, 'manifest.json');
   const target = join(dir.path, 'elsewhere', 'deploy.json');
   writeManifest(manifestPath, [jsEntry('/s/a.js', 'dist/a.js', 'hash1')]);
-  const deploy = await Deploy.init({ manifests: [manifestPath], path: target });
-  await deploy.commit();
-  const reopened = await Deploy.init({
+  await prepareDeploy({ manifests: [manifestPath], path: target, now: 1000 });
+  const reopened = await prepareDeploy({
     manifests: [manifestPath],
     path: target,
+    now: 2000,
   });
-  equal(reopened.plan().unchanged, 1);
+  equal(reopened.plan.unchanged, 1);
 });

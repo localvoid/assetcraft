@@ -13,7 +13,7 @@ src/
     diff.ts     # diffManifests, isEqualManifestEntry
     prune.ts    # pruneDir, collectManifestPaths
     validate.ts # validate/parse manifest entries
-  deploy.ts     # Deploy (stateful open/plan/commit + DeployFile types)
+  deploy.ts     # prepareDeploy (plan+persist+embed + DeployFile types)
   file.ts       # FileSystem utils
   compress.ts   # Compression utils
   http.ts       # Cache-Control / response header helpers

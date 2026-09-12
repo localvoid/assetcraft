@@ -1,22 +1,22 @@
 /**
- * Stateful deploy helper. Loads manifests and their deploy-state sidecar,
- * checks immutable-asset history for URL collisions, plans uploads and
- * deferred removals, and persists updated state for the next cycle.
+ * Single-call deploy helper. Loads manifests and their deploy-state
+ * sidecar, checks immutable-asset history for URL collisions, plans
+ * uploads and deferred removals, persists updated state for the next
+ * cycle, and returns the full embed set in-memory so callers never
+ * re-read the state file.
  *
  * A build pipeline with multiple build tools (e.g. separate html, css,
  * and js pipelines) passes one manifest path per tool. Previous manifests
- * are read back from the deploy state written by the last {@link commit},
- * so callers never handle them directly.
+ * are restored from the deploy state, so callers never handle them
+ * directly.
  *
  * Typical cycle:
  * ```ts
- * const deploy = await Deploy.init({
+ * const { plan, embed } = await prepareDeploy({
  *   manifests: ['dist/manifest.html.json', 'dist/manifest.js.json'],
  *   path: 'pub/deploy.json',
  * });
- * const plan = deploy.plan();
- * // …upload plan.add, delete plan.remove…
- * await deploy.commit();
+ * // …upload plan.add, delete plan.remove, embed/bundle embed rows…
  * ```
  */
 
@@ -53,8 +53,8 @@ export interface PendingRemoval {
 /**
  * A single deployable file: a manifest entry or one of its prebuilt
  * compressed variants. Per-file data (`url`, `path`, `size`, `sha256`,
- * `encoding`) lives on the row; shared metadata (`mime`, `immutable`,
- * `headers`, …) is read from `entry`.
+ * `encoding`, `deployedAt`) lives on the row; shared metadata (`mime`,
+ * `immutable`, `headers`, …) is read from `entry`.
  */
 export interface DeployFile {
   /** Public URL (entries) or entry URL + variant suffix (variants). */
@@ -66,22 +66,26 @@ export interface DeployFile {
   /** Variant encoding for compressed rows, `undefined` for identity. */
   readonly encoding: CompressFormat | undefined;
   readonly entry: ManifestEntry;
+  /** Unix seconds of the cycle that first deployed this content. */
+  readonly deployedAt: number;
+  /** Manifest source path this file belongs to (bundle sharding key). */
+  readonly source: string;
 }
 
-/** Result of {@link Deploy.plan}. */
+/** Result of the diff phase inside {@link prepareDeploy}. */
 export interface DeployPlan {
   /** New or content-changed files to upload (identity + variants). */
   readonly add: DeployFile[];
   /** Files absent long enough to delete now (identity + variants). */
   readonly remove: DeployFile[];
-  /** Pending state persisted by {@link Deploy.commit} for the next cycle. */
+  /** Pending state persisted for the next cycle. */
   readonly pendingRemove: PendingRemoval[];
   /** Entries identical in both manifests (kept as-is). */
   readonly unchanged: number;
 }
 
-/** Options for {@link Deploy.init}. */
-export interface DeployOptions {
+/** Options for {@link prepareDeploy}. */
+export interface PrepareDeployOptions {
   /**
    * Paths to JSON manifest files, one per build tool. Combined in order;
    * each manifest's entry paths resolve against its own directory.
@@ -107,6 +111,30 @@ export interface DeployOptions {
    * 365 days. Independent of file-deletion grace (`maxMissedDeploys`).
    */
   readonly purgeDuration?: number;
+  /** Unix seconds for this cycle. Defaults to `Math.floor(Date.now() / 1000)`. */
+  readonly now?: number;
+}
+
+/** Full result of {@link prepareDeploy}. */
+export interface PrepareDeployResult {
+  /** Diff rows for this cycle (upload `add`, delete `remove`). */
+  readonly plan: DeployPlan;
+  /** Snapshots exactly as persisted for the next cycle's diff. */
+  readonly snapshots: ManifestSnapshot[];
+  /**
+   * Full embed set: current entries plus grace-retained entries,
+   * expanded to identity + variant rows. Current sources come first in
+   * `manifests` order, retained entries after.
+   */
+  readonly embed: DeployFile[];
+  /** `embed` rows from current manifests, in `manifests` order. */
+  readonly current: DeployFile[];
+  /** `embed` rows retained under removal grace. */
+  readonly retained: DeployFile[];
+  /** Entries skipped by `external: false` (current + retained candidates). */
+  readonly skippedExternal: number;
+  /** Unix seconds of this cycle. */
+  readonly deployedAt: number;
 }
 
 /** Default history retention for inactive URLs: 365 days, in seconds. */
@@ -119,189 +147,152 @@ const COMPRESSED_VARIANTS: Record<CompressFormat, string> = {
   gzip: '.gz',
 };
 
+/** A manifest snapshot: source path with its resolve directory and entries. */
+export interface ManifestSnapshot {
+  readonly source: string;
+  readonly dir: string;
+  readonly entries: Manifest;
+}
+
+/** Per-file deploy timestamps: source -> path -> unix seconds. */
+export type DeployedAtMap = Record<string, Record<string, number>>;
+
 /**
- * Deploy — stateful facade over the deploy cycle. Open with
- * {@link Deploy.init}, inspect files with {@link files}, diff with
- * {@link plan}, persist with {@link commit}.
+ * Run one deploy cycle: load manifests + state, check history, diff,
+ * persist history/pending/snapshots/timestamps, and return the plan
+ * together with the full in-memory embed set. Callers must use the
+ * returned `embed`/`snapshots` directly instead of re-reading the state
+ * file.
+ *
+ * Removal grace is count-based (deterministic in CI): a path missing
+ * from its manifest gains one miss per cycle and is deleted once
+ * `missedDeploys >= maxMissedDeploys`. Reappearing paths clear their
+ * counter (self-healing on rollback).
+ *
+ * @throws On missing/invalid manifests, corrupt state, invalid
+ *   `maxMissedDeploys`, or immutable URL reuse with different content.
  */
-export class Deploy {
-  /** Combined entries of all manifests, in order. */
-  readonly manifest: Manifest;
-  /** Manifest source paths as passed to {@link Deploy.init}. */
-  readonly manifests: readonly string[];
-  /** Deploy-state path. */
-  readonly path: string;
-
-  /** Current manifests with their resolve directories. */
-  #loaded: ManifestSnapshot[];
-  /** Previous manifests restored from deploy state. */
-  #prevRecords: ManifestSnapshot[];
-  /** History entries carried from the loaded state, updated by `commit`. */
-  #history: DeployHistoryEntry[];
-  /** Pending removals carried from the loaded state, updated by `commit`. */
-  #pending: PendingRemoval[];
-  #maxMissedDeploys: number;
-  #external: boolean;
-  #purgeDuration: number;
-
-  private constructor(
-    loaded: ManifestSnapshot[],
-    path: string,
-    prevRecords: ManifestSnapshot[],
-    history: DeployHistoryEntry[],
-    pending: PendingRemoval[],
-    maxMissedDeploys: number,
-    external: boolean,
-    purgeDuration: number,
-  ) {
-    this.manifest = loaded.flatMap((l) => l.entries);
-    this.manifests = loaded.map((l) => l.source);
-    this.path = path;
-    this.#loaded = loaded;
-    this.#prevRecords = prevRecords;
-    this.#history = history;
-    this.#pending = pending;
-    this.#maxMissedDeploys = maxMissedDeploys;
-    this.#external = external;
-    this.#purgeDuration = purgeDuration;
+export async function prepareDeploy(options: PrepareDeployOptions): Promise<PrepareDeployResult> {
+  if (options.manifests.length === 0) {
+    throw new Error('Deploy requires at least one manifest path');
   }
-
-  /**
-   * Load the manifests, load the deploy-state sidecar (previous
-   * manifests, history, pending), and run the history collision check.
-   * @throws On missing/invalid manifests, corrupt state, invalid
-   *   `maxMissedDeploys`, or immutable URL reuse with different content.
-   */
-  static async init(options: DeployOptions): Promise<Deploy> {
-    if (options.manifests.length === 0) {
-      throw new Error('Deploy requires at least one manifest path');
+  const seen = new Set<string>();
+  for (const source of options.manifests) {
+    if (seen.has(source)) {
+      throw new Error(`Duplicate manifest '${source}'`);
     }
-    const seen = new Set<string>();
-    for (const source of options.manifests) {
-      if (seen.has(source)) {
-        throw new Error(`Duplicate manifest '${source}'`);
+    seen.add(source);
+  }
+  const maxMissedDeploys = options.maxMissedDeploys ?? 2;
+  if (maxMissedDeploys < 1 || !Number.isInteger(maxMissedDeploys)) {
+    throw new Error(`Invalid maxMissedDeploys '${maxMissedDeploys}': expected a positive integer`);
+  }
+  const now = options.now ?? Math.floor(Date.now() / 1000);
+  if (!Number.isInteger(now) || now < 0) {
+    throw new Error(`Invalid now '${options.now}': expected unix seconds`);
+  }
+  const external = options.external ?? false;
+  const purgeDuration = options.purgeDuration ?? DEFAULT_PURGE_DURATION;
+
+  const loaded: ManifestSnapshot[] = [];
+  for (const source of options.manifests) {
+    loaded.push({ source, dir: dirname(source), entries: await loadManifestFile(source) });
+  }
+  const state = await loadDeployState(options.path);
+  const prevRecords = state?.prevManifests ?? [];
+  const prevDeployedAt = state?.deployedAt ?? {};
+  const pending = state?.pending ?? [];
+  const history = state?.history ?? [];
+
+  checkHistory(
+    loaded.flatMap((l) => l.entries),
+    history,
+  );
+  const manifest = loaded.flatMap((l) => l.entries);
+
+  const plan = planAll(
+    loaded,
+    prevRecords,
+    pending,
+    external,
+    maxMissedDeploys,
+    prevDeployedAt,
+    now,
+  );
+  const nextHistory = recordHistory(manifest, history, purgeDuration, now);
+  const snapshots = snapshotRecords(loaded, prevRecords, plan.pendingRemove);
+  const deployedAt = nextDeployedAt(snapshots, prevRecords, prevDeployedAt, now);
+  const { current, retained, skippedExternal } = partitionEmbed(
+    snapshots,
+    plan.pendingRemove,
+    external,
+    deployedAt,
+  );
+  const embed = [...current, ...retained];
+
+  await updateFile(
+    options.path,
+    JSON.stringify(
+      { history: nextHistory, pending: plan.pendingRemove, prevManifests: snapshots, deployedAt },
+      undefined,
+      2,
+    ),
+  );
+  return { plan, snapshots, embed, current, retained, skippedExternal, deployedAt: now };
+}
+
+/**
+ * Diff every source against its previous snapshot (matched by source
+ * path). A manifest with no snapshot uploads everything; a snapshot
+ * whose source is gone has its entries treated as removed.
+ */
+function planAll(
+  loaded: ManifestSnapshot[],
+  prevRecords: ManifestSnapshot[],
+  prevPending: PendingRemoval[],
+  external: boolean,
+  maxMissedDeploys: number,
+  prevDeployedAt: DeployedAtMap,
+  now: number,
+): DeployPlan {
+  const add: DeployFile[] = [];
+  const remove: DeployFile[] = [];
+  const pendingRemove: PendingRemoval[] = [];
+  let unchanged = 0;
+  if (prevRecords.length === 0) {
+    for (const l of loaded) {
+      for (const entry of l.entries) {
+        add.push(...expandEntry(entry, l.source, l.dir, now, external));
       }
-      seen.add(source);
-    }
-    const maxMissedDeploys = options.maxMissedDeploys ?? 2;
-    if (maxMissedDeploys < 1 || !Number.isInteger(maxMissedDeploys)) {
-      throw new Error(
-        `Invalid maxMissedDeploys '${maxMissedDeploys}': expected a positive integer`,
-      );
-    }
-    const loaded: ManifestSnapshot[] = [];
-    for (const source of options.manifests) {
-      loaded.push({ source, dir: dirname(source), entries: await loadManifestFile(source) });
-    }
-    let history: DeployHistoryEntry[] = [];
-    let pending: PendingRemoval[] = [];
-    let prevRecords: ManifestSnapshot[] = [];
-    const state = await loadDeployState(options.path);
-    if (state !== undefined) {
-      history = state.history;
-      pending = state.pending;
-      prevRecords = state.prevManifests;
-    }
-    const manifest = loaded.flatMap((l) => l.entries);
-    checkHistory(manifest, history);
-    return new Deploy(
-      loaded,
-      options.path,
-      prevRecords,
-      history,
-      pending,
-      maxMissedDeploys,
-      options.external ?? false,
-      options.purgeDuration ?? DEFAULT_PURGE_DURATION,
-    );
-  }
-
-  /**
-   * Expand the manifests into deployable files: one row per entry plus
-   * one row per recorded compressed variant, with absolute disk paths.
-   * Manifest order is preserved within each source, sources in the
-   * order passed to {@link init}.
-   */
-  files(): DeployFile[] {
-    return this.#loaded.flatMap((l) =>
-      l.entries.flatMap((entry) => expandEntry(entry, this.#external, l.dir)),
-    );
-  }
-
-  /**
-   * Plan this deployment: new or content-changed files to upload, files
-   * absent long enough to delete, and pending state for the next cycle.
-   * Pure and dry-runnable: upload `add`, delete `remove`, then persist
-   * with {@link commit}. Each manifest is diffed against its own
-   * previous snapshot from deploy state (matched by source path); a
-   * manifest with no snapshot uploads everything, and a snapshot whose
-   * source is gone has its entries treated as removed.
-   *
-   * Removal grace is count-based (deterministic in CI): a path missing
-   * from its manifest gains one miss per plan and is deleted once
-   * `missedDeploys >= maxMissedDeploys`. Reappearing paths clear their counter
-   * (self-healing on rollback).
-   */
-  plan(): DeployPlan {
-    const add: DeployFile[] = [];
-    const remove: DeployFile[] = [];
-    const pendingRemove: PendingRemoval[] = [];
-    let unchanged = 0;
-    if (this.#prevRecords.length === 0) {
-      return { add: this.files(), remove, pendingRemove, unchanged };
-    }
-    const currentBySource = new Map(this.#loaded.map((l) => [l.source, l]));
-    const prevBySource = new Map(this.#prevRecords.map((r) => [r.source, r]));
-    const pendingBySource = Map.groupBy(this.#pending, (item) => item.source);
-    // Current sources in open() order, then snapshots whose source is gone.
-    const ordered = [...this.manifests];
-    for (const record of this.#prevRecords) {
-      if (!currentBySource.has(record.source)) {
-        ordered.push(record.source);
-      }
-    }
-    for (const source of ordered) {
-      const partial = planSource(
-        source,
-        currentBySource.get(source),
-        prevBySource.get(source),
-        pendingBySource.get(source) ?? [],
-        this.#external,
-        this.#maxMissedDeploys,
-      );
-      add.push(...partial.add);
-      remove.push(...partial.remove);
-      pendingRemove.push(...partial.pendingRemove);
-      unchanged += partial.unchanged;
     }
     return { add, remove, pendingRemove, unchanged };
   }
-
-  /**
-   * Record the manifests' immutable entries into history (purging
-   * inactive URLs past the retention window), advance pending removals
-   * from {@link plan}, snapshot the current manifests as the next
-   * cycle's previous manifests, and write the deploy-state sidecar —
-   * creating parent directories and skipping the write when content is
-   * unchanged. Updates in-memory state so further `plan()` calls see
-   * the commit.
-   * @returns The committed plan.
-   */
-  async commit(): Promise<DeployPlan> {
-    const plan = this.plan();
-    this.#history = recordHistory(this.manifest, this.#history, this.#purgeDuration);
-    this.#pending = plan.pendingRemove;
-    this.#prevRecords = snapshotRecords(this.#loaded, this.#prevRecords, plan.pendingRemove);
-    await updateFile(
-      this.path,
-      JSON.stringify(
-        { history: this.#history, pending: this.#pending, prevManifests: this.#prevRecords },
-        undefined,
-        2,
-      ),
-    );
-    return plan;
+  const currentBySource = new Map(loaded.map((l) => [l.source, l]));
+  const prevBySource = new Map(prevRecords.map((r) => [r.source, r]));
+  const pendingBySource = Map.groupBy(prevPending, (item) => item.source);
+  const ordered = loaded.map((l) => l.source);
+  for (const record of prevRecords) {
+    if (!currentBySource.has(record.source)) {
+      ordered.push(record.source);
+    }
   }
+  for (const source of ordered) {
+    const partial = planSource(
+      source,
+      currentBySource.get(source),
+      prevBySource.get(source),
+      pendingBySource.get(source) ?? [],
+      external,
+      maxMissedDeploys,
+      prevDeployedAt,
+      now,
+    );
+    add.push(...partial.add);
+    remove.push(...partial.remove);
+    pendingRemove.push(...partial.pendingRemove);
+    unchanged += partial.unchanged;
+  }
+  return { add, remove, pendingRemove, unchanged };
 }
 
 /**
@@ -316,13 +307,17 @@ function planSource(
   carried: PendingRemoval[],
   external: boolean,
   maxMissedDeploys: number,
+  prevDeployedAt: DeployedAtMap,
+  now: number,
 ): { add: DeployFile[]; remove: DeployFile[]; pendingRemove: PendingRemoval[]; unchanged: number } {
   if (record === undefined) {
     return {
       add:
         loaded === undefined
           ? []
-          : loaded.entries.flatMap((entry) => expandEntry(entry, external, loaded.dir)),
+          : loaded.entries.flatMap((entry) =>
+              expandEntry(entry, loaded.source, loaded.dir, now, external),
+            ),
       remove: [],
       pendingRemove: [],
       unchanged: 0,
@@ -336,7 +331,7 @@ function planSource(
     ...diff.changed.filter((c) => c.hashChanged).map((c) => c.next.path),
   ]);
   const add = current.flatMap((entry) =>
-    upload.has(entry.path) ? expandEntry(entry, external, dir) : [],
+    upload.has(entry.path) ? expandEntry(entry, source, dir, now, external) : [],
   );
 
   const prevByPath = new Map(record.entries.map((entry) => [entry.path, entry]));
@@ -356,19 +351,14 @@ function planSource(
     }
     const missedDeploys = (prevMissed.get(path) ?? 0) + 1;
     if (missedDeploys >= maxMissedDeploys) {
-      remove.push(...expandEntry(entry, external, record.dir));
+      remove.push(
+        ...expandEntry(entry, source, record.dir, prevDeployedAt[source]?.[path] ?? now, external),
+      );
     } else {
       pendingRemove.push({ source, path, url: urlToString(entry.url), missedDeploys });
     }
   }
   return { add, remove, pendingRemove, unchanged: diff.unchanged.length };
-}
-
-/** A manifest snapshot: source path with its resolve directory and entries. */
-interface ManifestSnapshot {
-  readonly source: string;
-  readonly dir: string;
-  readonly entries: Manifest;
 }
 
 /**
@@ -414,6 +404,73 @@ function snapshotRecords(
   return next;
 }
 
+/**
+ * Compute next-cycle deploy timestamps: carry the previous timestamp
+ * when the same source + path + content hash survives, otherwise stamp
+ * `now`. Covers every entry in `snapshots` (current + retained).
+ */
+function nextDeployedAt(
+  snapshots: ManifestSnapshot[],
+  prevRecords: ManifestSnapshot[],
+  prevDeployedAt: DeployedAtMap,
+  now: number,
+): DeployedAtMap {
+  const prevEntries = new Map<string, string>();
+  for (const record of prevRecords) {
+    for (const entry of record.entries) {
+      prevEntries.set(`${record.source}\0${entry.path}`, entry.sha256);
+    }
+  }
+  const next: DeployedAtMap = {};
+  for (const snapshot of snapshots) {
+    const byPath: Record<string, number> = {};
+    for (const entry of snapshot.entries) {
+      const key = `${snapshot.source}\0${entry.path}`;
+      byPath[entry.path] =
+        prevEntries.get(key) === entry.sha256
+          ? (prevDeployedAt[snapshot.source]?.[entry.path] ?? now)
+          : now;
+    }
+    next[snapshot.source] = byPath;
+  }
+  return next;
+}
+
+/**
+ * Partition committed snapshots into current vs grace-retained rows and
+ * count external-origin entries skipped by `external: false`. An entry
+ * is retained when its source + path is referenced by `pending`;
+ * everything else is current. Snapshot order is preserved within each
+ * partition.
+ */
+function partitionEmbed(
+  snapshots: ManifestSnapshot[],
+  pending: PendingRemoval[],
+  external: boolean,
+  deployedAt: DeployedAtMap,
+): { current: DeployFile[]; retained: DeployFile[]; skippedExternal: number } {
+  const retainedKeys = new Set(pending.map((item) => `${item.source}\0${item.path}`));
+  const current: DeployFile[] = [];
+  const retained: DeployFile[] = [];
+  let skippedExternal = 0;
+  for (const snapshot of snapshots) {
+    for (const entry of snapshot.entries) {
+      if (external !== true && typeof entry.url !== 'string') {
+        skippedExternal += 1;
+        continue;
+      }
+      const at = deployedAt[snapshot.source]?.[entry.path] ?? 0;
+      const rows = expandEntry(entry, snapshot.source, snapshot.dir, at, external);
+      if (retainedKeys.has(`${snapshot.source}\0${entry.path}`)) {
+        retained.push(...rows);
+      } else {
+        current.push(...rows);
+      }
+    }
+  }
+  return { current, retained, skippedExternal };
+}
+
 /** Deploy metadata persisted between cycles in a single sidecar file. */
 interface DeployState {
   /** Immutable-asset URL-to-hash mappings. */
@@ -422,6 +479,8 @@ interface DeployState {
   readonly pending: PendingRemoval[];
   /** Per-source manifest snapshots for the next cycle's diff. */
   readonly prevManifests: ManifestSnapshot[];
+  /** Per-file deploy timestamps (source -> path -> unix seconds). */
+  readonly deployedAt: DeployedAtMap;
 }
 
 /** Whether `value` is a plain object. */
@@ -430,9 +489,8 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Parse serialized deploy state. Missing keys default to empty arrays
- * (forward-compatible: state files written before `prevManifests`
- * existed behave as a first deploy with history enforced).
+ * Parse serialized deploy state. All keys are required; stale files
+ * from previous shapes are rejected (delete and re-run).
  * @throws On invalid payloads.
  */
 function parseDeployState(data: string): DeployState {
@@ -449,13 +507,11 @@ function parseDeployState(data: string): DeployState {
     history: parseHistoryEntries(parsed['history']),
     pending: parsePending(parsed['pending']),
     prevManifests: parsePrevManifests(parsed['prevManifests']),
+    deployedAt: parseDeployedAt(parsed['deployedAt']),
   };
 }
 
 function parseHistoryEntries(value: unknown): DeployHistoryEntry[] {
-  if (value === undefined) {
-    return [];
-  }
   if (!Array.isArray(value)) {
     throw new Error('Invalid deploy state: history must be an array');
   }
@@ -476,9 +532,6 @@ function parseHistoryEntries(value: unknown): DeployHistoryEntry[] {
 }
 
 function parsePending(value: unknown): PendingRemoval[] {
-  if (value === undefined) {
-    return [];
-  }
   if (!Array.isArray(value)) {
     throw new Error('Invalid deploy state: pending must be an array');
   }
@@ -486,6 +539,7 @@ function parsePending(value: unknown): PendingRemoval[] {
   for (const item of value) {
     if (
       !isObject(item) ||
+      typeof item['source'] !== 'string' ||
       typeof item['path'] !== 'string' ||
       typeof item['url'] !== 'string' ||
       typeof item['missedDeploys'] !== 'number' ||
@@ -493,19 +547,11 @@ function parsePending(value: unknown): PendingRemoval[] {
       item['missedDeploys'] < 1
     ) {
       throw new Error(
-        'Invalid deploy state: pending items need string path/url and positive integer missedDeploys',
-      );
-    }
-    // `source` predates multi-manifest state: unattributed items never
-    // match a snapshot and are flushed on the next commit.
-    const source = item['source'];
-    if (source !== undefined && typeof source !== 'string') {
-      throw new Error(
-        'Invalid deploy state: pending items need string path/url and positive integer missedDeploys',
+        'Invalid deploy state: pending items need string source/path/url and positive integer missedDeploys',
       );
     }
     result.push({
-      source: typeof source === 'string' ? source : '',
+      source: item['source'] as string,
       path: item['path'] as string,
       url: item['url'] as string,
       missedDeploys: item['missedDeploys'] as number,
@@ -515,9 +561,6 @@ function parsePending(value: unknown): PendingRemoval[] {
 }
 
 function parsePrevManifests(value: unknown): ManifestSnapshot[] {
-  if (value === undefined) {
-    return [];
-  }
   if (!Array.isArray(value)) {
     throw new Error('Invalid deploy state: prevManifests must be an array');
   }
@@ -544,6 +587,27 @@ function parsePrevManifests(value: unknown): ManifestSnapshot[] {
       entries: item['entries'] as Manifest,
     };
   });
+}
+
+function parseDeployedAt(value: unknown): DeployedAtMap {
+  if (!isObject(value)) {
+    throw new Error('Invalid deploy state: deployedAt must be an object');
+  }
+  const result: DeployedAtMap = {};
+  for (const [source, byPath] of Object.entries(value)) {
+    if (!isObject(byPath)) {
+      throw new Error('Invalid deploy state: deployedAt entries must be objects');
+    }
+    const paths: Record<string, number> = {};
+    for (const [path, at] of Object.entries(byPath)) {
+      if (typeof at !== 'number' || !Number.isInteger(at) || at < 0) {
+        throw new Error('Invalid deploy state: deployedAt values must be unix seconds');
+      }
+      paths[path] = at;
+    }
+    result[source] = paths;
+  }
+  return result;
 }
 
 /**
@@ -607,10 +671,11 @@ function checkHistory(manifest: Manifest, prevEntries?: DeployHistoryEntry[]): v
  */
 function recordHistory(
   manifest: Manifest,
-  prevEntries?: DeployHistoryEntry[],
-  purgeDuration: number = DEFAULT_PURGE_DURATION,
+  prevEntries: DeployHistoryEntry[],
+  purgeDuration: number,
+  now: number,
 ): DeployHistoryEntry[] {
-  const index = new Map(prevEntries?.map((entry) => [entry.url, { ...entry }]));
+  const index = new Map(prevEntries.map((entry) => [entry.url, { ...entry }]));
   const active = new Set<string>();
   for (const entry of manifest) {
     if (entry.immutable !== true) {
@@ -625,7 +690,7 @@ function recordHistory(
     }
     active.add(url);
   }
-  purgeInactive(index, active, purgeDuration);
+  purgeInactive(index, active, purgeDuration, now);
   return [...index.values()];
 }
 
@@ -634,16 +699,16 @@ function purgeInactive(
   index: Map<string, DeployHistoryEntry>,
   active: ReadonlySet<string>,
   duration: number,
+  now: number,
 ): void {
-  const t = Math.floor(Date.now() / 1000);
-  const cutoff = t - duration;
+  const cutoff = now - duration;
   for (const [url, entry] of index.entries()) {
     if (active.has(url)) {
       if (entry.removedAt !== undefined) {
         delete entry.removedAt;
       }
     } else if (entry.removedAt === undefined) {
-      entry.removedAt = t;
+      entry.removedAt = now;
     } else if (cutoff > entry.removedAt) {
       index.delete(url);
     }
@@ -652,11 +717,13 @@ function purgeInactive(
 
 function toDeployFile(
   entry: ManifestEntry,
+  source: string,
   url: string,
   path: string,
   size: number,
   sha256: string,
   encoding: CompressFormat | undefined,
+  deployedAt: number,
 ): DeployFile {
   return {
     url,
@@ -665,17 +732,34 @@ function toDeployFile(
     sha256,
     encoding,
     entry,
+    deployedAt,
+    source,
   };
 }
 
 /** Expand one entry into identity + compressed-variant rows with absolute paths. */
-function expandEntry(entry: ManifestEntry, external: boolean, dir: string): DeployFile[] {
+function expandEntry(
+  entry: ManifestEntry,
+  source: string,
+  dir: string,
+  deployedAt: number,
+  external: boolean,
+): DeployFile[] {
   if (external !== true && typeof entry.url !== 'string') {
     return [];
   }
   const url = urlToString(entry.url);
   const rows: DeployFile[] = [
-    toDeployFile(entry, url, join(dir, entry.path), entry.size, entry.sha256, undefined),
+    toDeployFile(
+      entry,
+      source,
+      url,
+      join(dir, entry.path),
+      entry.size,
+      entry.sha256,
+      undefined,
+      deployedAt,
+    ),
   ];
   const compressed = entry.compressed;
   if (compressed !== undefined) {
@@ -685,11 +769,13 @@ function expandEntry(entry: ManifestEntry, external: boolean, dir: string): Depl
         rows.push(
           toDeployFile(
             entry,
+            source,
             url + COMPRESSED_VARIANTS[format],
             join(dir, variant.path),
             variant.size,
             variant.sha256 ?? entry.sha256,
             format,
+            deployedAt,
           ),
         );
       }
