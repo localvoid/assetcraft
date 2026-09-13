@@ -47,8 +47,21 @@ export function getCacheControl(
 /**
  * Build an `ETag` value for an entry from its content hash.
  * Quoted so it can be compared against `If-None-Match` directly.
+ *
+ * Entries with compressed variants (`br`/`zst`/`gz`) share one ETag
+ * across byte-different representations (identity vs. encoded), so
+ * they get a weak validator (`W/"…"`); otherwise a strong validator
+ * (`"…"`). `If-None-Match` uses weak comparison (RFC 9110 §13.1.1),
+ * so old strong tags still match their weak counterparts.
  */
-export function getETag(entry: Pick<ManifestEntry, 'sha256'>): string {
+export function getETag(entry: Pick<ManifestEntry, 'sha256' | 'compressed'>): string {
+  const compressed = entry.compressed;
+  if (
+    compressed !== undefined &&
+    (compressed.br !== undefined || compressed.zst !== undefined || compressed.gz !== undefined)
+  ) {
+    return `W/"${entry.sha256}"`;
+  }
   return `"${entry.sha256}"`;
 }
 

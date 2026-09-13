@@ -28,6 +28,22 @@ describe('getETag', () => {
   test('quotes the content hash', () => {
     expect(getETag(mkEntry())).toBe('"abcDEF123-_"');
   });
+
+  test('emits a weak etag when compressed variants exist', () => {
+    expect(getETag(mkEntry({ compressed: { br: { path: 'app.js.br', size: 40 } } }))).toBe(
+      'W/"abcDEF123-_"',
+    );
+    expect(getETag(mkEntry({ compressed: { zst: { path: 'app.js.zst', size: 30 } } }))).toBe(
+      'W/"abcDEF123-_"',
+    );
+    expect(getETag(mkEntry({ compressed: { gz: { path: 'app.js.gz', size: 50 } } }))).toBe(
+      'W/"abcDEF123-_"',
+    );
+  });
+
+  test('emits a strong etag for an empty compressed map', () => {
+    expect(getETag(mkEntry({ compressed: {} }))).toBe('"abcDEF123-_"');
+  });
 });
 
 describe('buildResponseHeaders', () => {
