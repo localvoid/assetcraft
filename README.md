@@ -21,7 +21,8 @@ npm install assetcraft
 
 ```text
 source files
-  -> createManifestEntry (hash, size, hashed path, SRI, compress)
+  -> createPathFormatter (optional content-hashed path)
+  -> createManifestEntry (hash, size, SRI, compress)
   -> ManifestBuilder.add/upsert (+ import external manifests)
   -> write files + variants to disk, write manifest JSON
   -> pruneDir (delete stale hashed outputs)
@@ -47,7 +48,7 @@ const { entry, variants } = await createManifestEntry({
   type: 'js',
   mime: 'application/javascript',
   content: code,
-  path: 'assets/app.js', // -> assets/app-<12-char-hash>.js
+  path: 'assets/app.js', // used as-is; pre-format with createPathFormatter for hashing
   name: 'app',
   compress: true, // default thresholds; see below
   extra: { module: 'esm', entry: true },
@@ -87,7 +88,7 @@ Common base fields:
 | --- | --- |
 | `type`, `mime` | Discriminant + `Content-Type` source |
 | `url: string \| { origin, path }` | Public URL. Object form is origin-scoped (`origin + path` is the identity key) |
-| `path` | Output-relative disk path (hashed when built via helper) |
+| `path` | Output-relative disk path (use `createPathFormatter` for content-hashed names) |
 | `sha256` | Base64url SHA-256 of identity content |
 | `size` | Identity bytes (`Content-Length` source) |
 | `immutable?` | `true` = URL never serves different bytes; gets long-lived immutable `Cache-Control` |
@@ -105,15 +106,26 @@ Per-type extras (e.g. `ManifestJSEntry.module/entry/async/defer/deps`, `Manifest
 
 ## Building entries: `assetcraft/manifest/entry`
 
-`createManifestEntry({ type, mime, content, path, ... })` measures `size`, hashes `sha256`, derives hashed `path`/`url`, computes `integrity`, optionally compresses.
+`createManifestEntry({ type, mime, content, path, ... })` measures `size`, hashes `sha256`, computes `integrity`, optionally compresses. `path` is used as-is; format it with `createPathFormatter` when you want a content-hashed file name.
 
 Defaults:
 
 - `immutable: true` unless `immutable: false` is passed.
-- `pathHash: true` (12-char hash prefix before extension: `app.js` -> `app-a1b2c3d4e5f6.js`). Pass `false` to disable or a number for custom length (`pathHash: 8`).
 - `integrity: 'sha384'` unless `false`. Algorithms: `sha256 | sha384 | sha512`.
 - `url: '/' + path` unless explicit. Pass a string or `{ origin, path }` when CDN layout differs from disk layout.
 - `compress: false`. Pass `true` or `CompressAssetOptions`.
+
+```ts
+import { calculateHash } from 'assetcraft/file';
+import { createManifestEntry, createPathFormatter } from 'assetcraft/manifest/entry';
+
+// Optional: build a content-hashed path before creating the entry.
+// Options: { dir?: string, hash?: number } (hash length, default 12).
+const formatPath = createPathFormatter({ dir: 'assets', hash: 8 });
+const path = formatPath({ path: 'src/app.js' } as never, calculateHash(code));
+// -> assets/app-<8-char-hash>.js
+const { entry } = await createManifestEntry({ type: 'js', mime: 'application/javascript', content: code, path });
+```
 
 ```ts
 import { createManifestEntry } from 'assetcraft/manifest/entry';
@@ -338,7 +350,7 @@ formatFileSize(1536); // '1.50KB'
 | Specifier | Exports |
 | --- | --- |
 | `assetcraft/manifest` | Types, `urlToString`, `importManifests` |
-| `assetcraft/manifest/entry` | `createManifestEntry`, `CreateManifestEntryOptions/Result`, `IntegrityAlgorithm` |
+| `assetcraft/manifest/entry` | `createManifestEntry`, `createPathFormatter`, `CreateManifestEntryOptions/Result`, `CreatePathFormatterOptions`, `PathFormatter`, `IntegrityAlgorithm` |
 | `assetcraft/manifest/build` | `ManifestBuilder` |
 | `assetcraft/manifest/validate` | `validateManifestEntry`, `assertManifestEntry`, `validateManifest`, `parseManifest`, `isManifestEntryType` |
 | `assetcraft/manifest/diff` | `diffManifests`, `ManifestDiff`, `ManifestChangedEntry` |
