@@ -3,14 +3,8 @@
  * directories. Used internally by the manifest builder pipeline.
  */
 
-import { hash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import { dirname, extname, isAbsolute, join, posix, resolve, sep, win32 } from 'node:path';
-
-/** Compute a URL-safe SHA-256 hash of the given content. */
-export function calculateHash(code: string | Uint8Array): string {
-  return hash('sha256', code, 'base64url');
-}
 
 /**
  * Generate a content-hashed filename.

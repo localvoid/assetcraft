@@ -7,7 +7,7 @@ TypeScript toolkit for managing static web assets: content-hashed manifests, com
 - **Prune / Diff / Validate** — clean stale hashed files, diff builds, validate JSON manifests.
 - **Deploy** — multi-manifest upload/delete planning with immutable-URL collision protection and deletion grace (version skew/deployment drift).
 - **HTTP** — `Cache-Control`, `ETag`, `Content-Encoding`, and `Link: rel=preload` header builders.
-- **File** — hashing, hashed filenames, conditional writes, directory cleaning.
+- **File** — hashed filenames, conditional writes, directory cleaning.
 
 ESM-only (`"type": "module"`, `sideEffects: false`). Ships `dist/` + `src/`. Requires Node with `zlib.zstdCompress` (Node 22+).
 
@@ -35,8 +35,7 @@ Entry `path` is the output-relative disk path. Entry `url` is the public URL (st
 ```ts
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { ManifestBuilder } from 'assetcraft/manifest/build';
-import { createManifestEntry } from 'assetcraft/manifest/entry';
+import { ManifestBuilder, createManifestEntry } from 'assetcraft/manifest/build';
 import { pruneDir } from 'assetcraft/manifest/prune';
 import { updateFile } from 'assetcraft/file';
 
@@ -104,7 +103,9 @@ Per-type extras (e.g. `ManifestJSEntry.module/entry/async/defer/deps`, `Manifest
 
 `urlToString(url)` normalizes both URL forms. `importManifests([paths])` dynamically imports JSON manifests with `{ with: { type: 'json' } }` and returns `{ path, manifest }[]` in order.
 
-## Building entries: `assetcraft/manifest/entry`
+## Building manifests: `assetcraft/manifest/build`
+
+`calculateHash(content)` computes the base64url SHA-256 used for `sha256` fields and content-hashed paths.
 
 `createManifestEntry({ type, mime, content, path, ... })` measures `size`, hashes `sha256`, computes `integrity`, optionally compresses. `path` is used as-is; format it with `createPathFormatter` when you want a content-hashed file name.
 
@@ -116,8 +117,7 @@ Defaults:
 - `compress: false`. Pass `true` or `CompressAssetOptions`.
 
 ```ts
-import { calculateHash } from 'assetcraft/file';
-import { createManifestEntry, createPathFormatter } from 'assetcraft/manifest/entry';
+import { calculateHash, createManifestEntry, createPathFormatter } from 'assetcraft/manifest/build';
 
 // Optional: build a content-hashed path before creating the entry.
 // Options: { dir?: string, hash?: number } (hash length, default 12).
@@ -128,7 +128,7 @@ const { entry } = await createManifestEntry({ type: 'js', mime: 'application/jav
 ```
 
 ```ts
-import { createManifestEntry } from 'assetcraft/manifest/entry';
+import { createManifestEntry } from 'assetcraft/manifest/build';
 
 const { entry, variants } = await createManifestEntry({
   type: 'css',
@@ -148,7 +148,7 @@ const { entry, variants } = await createManifestEntry({
 
 Type-specific fields go in `extra` (typed as `Omit<ManifestEntryFor<T>, ManagedKeys>`). `compression-dictionary` requires `extra: { match: '*.js', matchDest?: '...' }`. Result always passes `validateManifestEntry`.
 
-## Building manifests: `assetcraft/manifest/build`
+`ManifestBuilder` accumulates entries and maintains lookup indices:
 
 ```ts
 import { readFile } from 'node:fs/promises';
@@ -321,7 +321,6 @@ Serving flow: map `Accept-Encoding` (`br`/`zstd`/`gzip`) to `entry.compressed` k
 
 ```ts
 import {
-  calculateHash,
   cleanDir,
   cleanDirRecursive,
   formatFileSize,
@@ -332,7 +331,6 @@ import {
   updateFile,
 } from 'assetcraft/file';
 
-calculateHash('hello'); // base64url SHA-256
 uniqueFileName('style.css', hash); // style-<12-char-hash>.css
 await updateFile('dist/manifest.json', json); // mkdir -p, write only if changed; returns boolean
 await cleanDir('dist', new Set(['keep.txt'])); // top-level files/symlinks only
@@ -350,15 +348,14 @@ formatFileSize(1536); // '1.50KB'
 | Specifier | Exports |
 | --- | --- |
 | `assetcraft/manifest` | Types, `urlToString`, `importManifests` |
-| `assetcraft/manifest/entry` | `createManifestEntry`, `createPathFormatter`, `CreateManifestEntryOptions/Result`, `CreatePathFormatterOptions`, `PathFormatter`, `IntegrityAlgorithm` |
-| `assetcraft/manifest/build` | `ManifestBuilder` |
+| `assetcraft/manifest/build` | `ManifestBuilder`, `calculateHash`, `createManifestEntry`, `createPathFormatter`, `CreateManifestEntryOptions/Result`, `CreatePathFormatterOptions`, `PathFormatter`, `IntegrityAlgorithm` |
 | `assetcraft/manifest/validate` | `validateManifestEntry`, `assertManifestEntry`, `validateManifest`, `parseManifest`, `isManifestEntryType` |
 | `assetcraft/manifest/diff` | `diffManifests`, `ManifestDiff`, `ManifestChangedEntry` |
 | `assetcraft/manifest/prune` | `pruneDir`, `collectManifestPaths`, `PruneOptions` |
 | `assetcraft/compress` | `compressAsset`, `compressAssetSync`, `CompressAssetOptions/Result`, `CompressFormat` |
 | `assetcraft/deploy` | `prepareDeploy`, `PrepareDeployOptions/Result`, `DeployPlan/File`, `DeployHistoryEntry`, `PendingRemoval`, `ManifestSnapshot` |
 | `assetcraft/http` | `getCacheControl`, `getContentEncoding`, `getETag`, `getPreloadAs`, `getPreloadLink`, `getLinkHeader`, `buildResponseHeaders` + option types |
-| `assetcraft/file` | Hashing, naming, `updateFile`, cleaning, path helpers, `formatFileSize` |
+| `assetcraft/file` | Naming, `updateFile`, cleaning, path helpers, `formatFileSize` |
 
 ## Commands
 
