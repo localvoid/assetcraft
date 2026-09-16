@@ -93,6 +93,13 @@ export interface ManifestBaseEntry<T extends ManifestEntryType> {
   headers?: Record<string, string>;
   /** Subresource Integrity string (e.g. "sha384-…") for HTML tag generation. */
   integrity?: string;
+  /**
+   * Compression intent for the deploy script. `true` always tries
+   * compression, `false` never compresses, `undefined` (default) defers
+   * to the deploy script's filter or the `isCompressible` type/mime
+   * default in `assetcraft/compress`.
+   */
+  compressible?: boolean;
   /** Compressed variants of the asset on disk. */
   compressed?: ManifestCompressedVariants;
   /** CORS mode for `<script crossorigin>` / `<link crossorigin>` generation. */

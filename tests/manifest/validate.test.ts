@@ -88,6 +88,16 @@ describe('validateManifestEntry', () => {
     }
   });
 
+  test('rejects bad compressible', () => {
+    for (const compressible of ['yes', 1, 0]) {
+      expect(validateManifestEntry(validEntry({ compressible }))).toContain(
+        'compressible must be a boolean',
+      );
+    }
+    expect(validateManifestEntry(validEntry({ compressible: true }))).toEqual([]);
+    expect(validateManifestEntry(validEntry({ compressible: false }))).toEqual([]);
+  });
+
   test('rejects bad url', () => {
     expect(validateManifestEntry(validEntry({ url: '' }))).toContain(
       'url must be a non-empty string',

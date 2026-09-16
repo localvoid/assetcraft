@@ -51,6 +51,9 @@ export function validateManifestEntry(entry: unknown): string[] {
   if (e['immutable'] !== undefined && typeof e['immutable'] !== 'boolean') {
     errors.push('immutable must be a boolean');
   }
+  if (e['compressible'] !== undefined && typeof e['compressible'] !== 'boolean') {
+    errors.push('compressible must be a boolean');
+  }
   const url = e['url'];
   if (typeof url === 'string') {
     if (url === '') {

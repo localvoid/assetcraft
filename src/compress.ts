@@ -19,6 +19,8 @@ import {
   type ZstdOptions,
 } from 'node:zlib';
 
+import type { ManifestEntry } from './manifest.js';
+
 /** Compress asset options. */
 export interface CompressAssetOptions {
   /** Minimum uncompressed size (bytes) before compression is attempted. */
@@ -174,4 +176,52 @@ function resolveGzipOptions(overrides?: ZlibOptions): ZlibOptions {
     level: constants.Z_BEST_COMPRESSION,
     ...overrides,
   };
+}
+
+/**
+ * Default compressibility by type/mime. Text-like assets compress;
+ * already-compressed media and opaque bytes do not. `binary` entries fall
+ * through to the mime check so text-like payloads with a `binary` type
+ * (e.g. `application/json`) still compress.
+ *
+ * Deploy scripts combine this with the per-entry `compressible` intent:
+ * explicit `true`/`false` wins, otherwise
+ * `shouldCompress?.(entry) ?? isCompressible(entry)`.
+ */
+export function isCompressible(entry: Pick<ManifestEntry, 'type' | 'mime'>): boolean {
+  switch (entry.type) {
+    case 'js':
+    case 'wasm':
+    case 'html':
+    case 'css':
+    case 'svg':
+    case 'text':
+    case 'sourcemap':
+      return true;
+    case 'compression-dictionary':
+    case 'font':
+    case 'image':
+    case 'audio':
+    case 'video':
+      return false;
+    case 'binary':
+      break;
+  }
+  const mime = entry.mime.split(';', 1)[0]?.trim().toLowerCase() ?? '';
+  if (mime.startsWith('text/')) {
+    return true;
+  }
+  if (mime.endsWith('+json') || mime.endsWith('+xml')) {
+    return true;
+  }
+  switch (mime) {
+    case 'application/javascript':
+    case 'application/json':
+    case 'application/manifest+json':
+    case 'application/xml':
+    case 'application/xhtml+xml':
+      return true;
+    default:
+      return false;
+  }
 }

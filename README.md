@@ -22,9 +22,11 @@ npm install assetcraft
 ```text
 source files
   -> createPathFormatter (optional content-hashed path)
-  -> createManifestEntry (hash, size, SRI, compress)
+  -> build entries by hand (hash with urlSafeSHA256, SRI with computeIntegrity)
   -> ManifestBuilder.add/upsert (+ import external manifests)
-  -> write files + variants to disk, write manifest JSON
+  -> write identity files, then compress in the deploy script
+  -> (compressAsset + isCompressible, record entry.compressed)
+  -> write manifest JSON (possibly merged/rewritten paths)
   -> pruneDir (delete stale hashed outputs)
 ```
 
@@ -35,39 +37,59 @@ Entry `path` is the output-relative disk path. Entry `url` is the public URL (st
 ```ts
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { ManifestBuilder, createManifestEntry } from 'assetcraft/manifest/build';
+import { ManifestBuilder, computeIntegrity, urlSafeSHA256 } from 'assetcraft/manifest/build';
+import { compressAsset, isCompressible } from 'assetcraft/compress';
 import { pruneDir } from 'assetcraft/manifest/prune';
 import { updateFile } from 'assetcraft/file';
 
 const outDir = 'dist';
 const builder = new ManifestBuilder();
 
-const code = await readFile('src/app.js', 'utf8');
-const { entry, variants } = await createManifestEntry({
+const bytes = await readFile('src/app.js');
+const path = 'assets/app.js'; // used as-is; pre-format with createPathFormatter for hashing
+builder.add({
   type: 'js',
   mime: 'application/javascript',
-  content: code,
-  path: 'assets/app.js', // used as-is; pre-format with createPathFormatter for hashing
+  url: `/${path}`,
+  path,
+  sha256: urlSafeSHA256(bytes),
+  size: bytes.length,
+  immutable: true,
+  integrity: computeIntegrity(bytes, 'sha384'),
   name: 'app',
-  compress: true, // default thresholds; see below
-  extra: { module: 'esm', entry: true },
+  module: 'esm',
+  entry: true,
 });
-builder.add(entry);
 
-// Write identity + variants. Variant buffers must be written by the caller
-// to entry.compressed[format].path.
+// Write identity, then compress in the deploy script. For each selected
+// entry, encode variants and record them in entry.compressed.
+const entry = builder.getByPath(path)!;
 await mkdir(join(outDir, dirname(entry.path)), { recursive: true });
-await writeFile(join(outDir, entry.path), code);
-for (const [format, data] of Object.entries(variants)) {
-  const meta = entry.compressed?.[format as keyof typeof variants];
-  if (meta) await writeFile(join(outDir, meta.path), data);
+await writeFile(join(outDir, entry.path), bytes);
+
+const manifest = [];
+for (const e of builder.entries) {
+  const selected = e.compressible ?? isCompressible(e);
+  if (!selected) {
+    manifest.push(e);
+    continue;
+  }
+  const content = await readFile(join(outDir, e.path));
+  const variants = await compressAsset(content);
+  const compressed = {};
+  for (const [format, data] of Object.entries(variants)) {
+    const variantPath = `${e.path}.${format}`;
+    await writeFile(join(outDir, variantPath), data);
+    compressed[format] = { path: variantPath, size: data.length, sha256: urlSafeSHA256(data) };
+  }
+  manifest.push(Object.keys(compressed).length > 0 ? { ...e, compressed } : e);
 }
 
-await updateFile('dist/manifest.js.json', JSON.stringify(builder.entries, null, 2));
+await updateFile('dist/manifest.js.json', JSON.stringify(manifest, null, 2));
 
 // Delete stale hashed files left by previous builds.
 // Entries are relative to `dist`, so prune `dist` and keep the manifest itself.
-await pruneDir(outDir, builder.entries, {
+await pruneDir(outDir, manifest, {
   ignore: ['manifest.js.json'],
   compressedSuffixes: ['.br', '.zst', '.gz'],
 });
@@ -94,7 +116,8 @@ Common base fields:
 | `name?: string \| string[]` | Logical lookup key(s) |
 | `tags?: string[]` | Grouping/filtering |
 | `headers?: Record<string,string>` | Merged last in `buildResponseHeaders`; overrides generated values (except `Link`, which is concatenated) |
-| `integrity?` | SRI string (`sha256-…`/`sha384-…`/`sha512-…`) |
+| `integrity?` | SRI string (`sha256-…`/`sha384-…`/`sha512-…`, via `computeIntegrity`) |
+| `compressible?` | Compression intent for the deploy script (`true`/`false`/`undefined` = auto via `isCompressible`); `compressed?` is recorded by the deploy script |
 | `compressed?` | `{ br/zst/gz?: { path, size, sha256? } }` |
 | `crossorigin?`, `fetchPriority?` | HTML generation hints |
 | `preload?: ManifestPreload[]` | Rendered as `Link: <url>; rel=preload; …` |
@@ -105,48 +128,30 @@ Per-type extras (e.g. `ManifestJSEntry.module/entry/async/defer/deps`, `Manifest
 
 ## Building manifests: `assetcraft/manifest/build`
 
-`urlSafeSHA256(content)` computes the base64url SHA-256 used for `sha256` fields and content-hashed paths.
-
-`createManifestEntry({ type, mime, content, path, ... })` measures `size`, hashes `sha256`, computes `integrity`, optionally compresses. `path` is used as-is; format it with `createPathFormatter` when you want a content-hashed file name.
-
-Defaults:
-
-- `immutable: true` unless `immutable: false` is passed.
-- `integrity: 'sha384'` unless `false`. Algorithms: `sha256 | sha384 | sha512`.
-- `url: '/' + path` unless explicit. Pass a string or `{ origin, path }` when CDN layout differs from disk layout.
-- `compress: false`. Pass `true` or `CompressAssetOptions`.
+`urlSafeSHA256(content)` computes the base64url SHA-256 used for `sha256` fields and content-hashed paths. `computeIntegrity(content, algo)` computes the SRI string (`sha256 | sha384 | sha512`).
 
 ```ts
-import { urlSafeSHA256, createManifestEntry, createPathFormatter } from 'assetcraft/manifest/build';
+import { urlSafeSHA256, computeIntegrity, createPathFormatter } from 'assetcraft/manifest/build';
 
 // Optional: build a content-hashed path before creating the entry.
 // Options: { dir?: string, hash?: number } (hash length, default 12).
 const formatPath = createPathFormatter({ dir: 'assets', hash: 8 });
-const path = formatPath({ path: 'src/app.js' } as never, urlSafeSHA256(code));
+const bytes = new TextEncoder().encode(code);
+const path = formatPath({ path: 'src/app.js' } as never, urlSafeSHA256(bytes));
 // -> assets/app-<8-char-hash>.js
-const { entry } = await createManifestEntry({ type: 'js', mime: 'application/javascript', content: code, path });
+const entry = {
+  type: 'js',
+  mime: 'application/javascript',
+  url: `/${path}`,
+  path,
+  sha256: urlSafeSHA256(bytes),
+  size: bytes.length,
+  immutable: true,
+  integrity: computeIntegrity(bytes, 'sha384'),
+} as const;
 ```
 
-```ts
-import { createManifestEntry } from 'assetcraft/manifest/build';
-
-const { entry, variants } = await createManifestEntry({
-  type: 'css',
-  mime: 'text/css',
-  content: css,
-  path: 'assets/style.css',
-  url: 'https://cdn.example/assets/style.css',
-  immutable: false, // mutable URL: must revalidate
-  name: 'style',
-  tags: ['app'],
-  compress: { sizeMin: 1024, sizeMinDiffRatio: 0.2 },
-  extra: { media: 'screen' },
-});
-// variants: { br?: Buffer, zst?: Buffer, gz?: Buffer } — only threshold-passing formats.
-// entry.compressed[format] = { path: entry.path + '.' + format, size, sha256 }.
-```
-
-Type-specific fields go in `extra` (typed as `Omit<ManifestEntryFor<T>, ManagedKeys>`). `compression-dictionary` requires `extra: { match: '*.js', matchDest?: '...' }`. Result always passes `validateManifestEntry`.
+Type-specific fields go directly on the entry. `compression-dictionary` requires `match: '*.js'` (`matchDest?` optional). Validate the result with `validateManifestEntry`.
 
 `ManifestBuilder` accumulates entries and maintains lookup indices:
 
@@ -244,6 +249,8 @@ const sync = compressAssetSync(content, { sizeMin: 2048 });
 
 `CompressFormat = 'br' | 'zst' | 'gz'` are file-suffix keys (`'.' + format`); `getContentEncoding(format)` in `assetcraft/http` maps them to HTTP `Content-Encoding` (`br`→`br`, `zst`→`zstd`, `gz`→`gzip`).
 
+`isCompressible(entry)` is the type/mime default for deploy scripts (`js`, `wasm`, `html`, `css`, `svg`, `text`, `sourcemap` yes; `font`, `image`, `audio`, `video`, `compression-dictionary` no; `binary` by text-like mime). Combine it with the per-entry intent: `entry.compressible ?? shouldCompress?.(entry) ?? isCompressible(entry)`, where `shouldCompress` is the deploy script's own filter. The script may also rewrite relative paths or merge manifests before encoding — that stays outside this library.
+
 ## Deploy: `assetcraft/deploy`
 
 `prepareDeploy`: one manifest path per build tool; previous manifests are restored from deploy state, so callers never pass them directly. The full embed set (current + grace-retained entries) is returned in-memory — never re-read the state file.
@@ -285,7 +292,12 @@ Details:
 Http helpers for dev servers and deploy pipelines. Production servers should precompile headers before deployment.
 
 ```ts
-import { buildResponseHeaders, getCacheControl, getContentEncoding, getETag } from 'assetcraft/http';
+import {
+  buildResponseHeaders,
+  getCacheControl,
+  getContentEncoding,
+  getETag,
+} from 'assetcraft/http';
 
 getCacheControl(entry); // immutable: public, max-age=31536000, immutable
 // mutable: public, max-age=0, must-revalidate
@@ -348,11 +360,11 @@ formatFileSize(1536); // '1.50KB'
 | Specifier | Exports |
 | --- | --- |
 | `assetcraft/manifest` | Types, `urlToString`, `importManifests` |
-| `assetcraft/manifest/build` | `ManifestBuilder`, `urlSafeSHA256`, `createManifestEntry`, `createPathFormatter`, `CreateManifestEntryOptions/Result`, `CreatePathFormatterOptions`, `PathFormatter`, `IntegrityAlgorithm` |
+| `assetcraft/manifest/build` | `ManifestBuilder`, `urlSafeSHA256`, `computeIntegrity`, `createPathFormatter`, `CreatePathFormatterOptions`, `PathFormatter`, `IntegrityAlgorithm`, `ManifestEntryFor` |
 | `assetcraft/manifest/validate` | `validateManifestEntry`, `assertManifestEntry`, `validateManifest`, `parseManifest`, `isManifestEntryType` |
 | `assetcraft/manifest/diff` | `diffManifests`, `ManifestDiff`, `ManifestChangedEntry` |
 | `assetcraft/manifest/prune` | `pruneDir`, `collectManifestPaths`, `PruneOptions` |
-| `assetcraft/compress` | `compressAsset`, `compressAssetSync`, `CompressAssetOptions/Result`, `CompressFormat` |
+| `assetcraft/compress` | `compressAsset`, `compressAssetSync`, `isCompressible`, `CompressAssetOptions/Result`, `CompressFormat` |
 | `assetcraft/deploy` | `prepareDeploy`, `PrepareDeployOptions/Result`, `DeployPlan/File`, `DeployHistoryEntry`, `PendingRemoval`, `ManifestSnapshot` |
 | `assetcraft/http` | `getCacheControl`, `getContentEncoding`, `getETag`, `getPreloadAs`, `getPreloadLink`, `getLinkHeader`, `buildResponseHeaders` + option types |
 | `assetcraft/file` | Naming, `updateFile`, cleaning, path helpers, `formatFileSize` |

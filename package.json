@@ -16,6 +16,7 @@
     "src",
     "!dist/**/*.tsbuildinfo",
     "README.md",
+    "docs/BREAKING.md",
     "LICENSE"
   ],
   "type": "module",
