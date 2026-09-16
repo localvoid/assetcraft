@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 import type { ManifestEntry, ManifestJSEntry } from '../../src/manifest.js';
 import {
-  calculateHash,
+  urlSafeSHA256,
   createManifestEntry,
   createPathFormatter,
   ManifestBuilder,
@@ -306,7 +306,7 @@ describe('createManifestEntry', () => {
       path: 'assets/app.js',
     });
     expect(entry.type).toBe('js');
-    expect(entry.sha256).toBe(calculateHash(content));
+    expect(entry.sha256).toBe(urlSafeSHA256(content));
     expect(entry.size).toBe(Buffer.byteLength(content));
     expect(entry.immutable).toBe(true);
     expect(entry.path).toBe('assets/app.js');
@@ -359,14 +359,14 @@ describe('createManifestEntry', () => {
       const meta = entry.compressed?.[key];
       expect(meta?.path).toBe(`${entry.path}${suffixes[key]}`);
       expect(meta?.size).toBe((data as Buffer).length);
-      expect(meta?.sha256).toBe(calculateHash(data as Buffer));
+      expect(meta?.sha256).toBe(urlSafeSHA256(data as Buffer));
     }
     expect(validateManifestEntry(entry)).toEqual([]);
   });
 
   test('accepts a pre-formatted hashed path', async () => {
     const content = 'b'.repeat(4096);
-    const sha256 = calculateHash(content);
+    const sha256 = urlSafeSHA256(content);
     const formatPath = createPathFormatter({ hash: 8 });
     const path = formatPath({ path: 'data/strings.json' } as ManifestEntry, sha256);
     expect(path).toMatch(/^data\/strings-[A-Za-z0-9_-]{8}\.json$/);

@@ -297,7 +297,7 @@ export class ManifestBuilder {
 }
 
 /** Compute a URL-safe SHA-256 hash of the given content. */
-export function calculateHash(code: string | Uint8Array): string {
+export function urlSafeSHA256(code: string | Uint8Array): string {
   return hash('sha256', code, 'base64url');
 }
 
@@ -398,7 +398,7 @@ export async function createManifestEntry<T extends ManifestEntryType>(
 
   const bytes = typeof content === 'string' ? TEXT_ENCODER.encode(content) : content;
   const size = bytes.length;
-  const sha256 = calculateHash(bytes);
+  const sha256 = urlSafeSHA256(bytes);
 
   const path = options.path;
   const url = options.url ?? `/${path}`;
@@ -450,7 +450,7 @@ export async function createManifestEntry<T extends ManifestEntryType>(
         compressed[format] = {
           path: `${path}.${format}`,
           size: data.length,
-          sha256: calculateHash(data),
+          sha256: urlSafeSHA256(data),
         };
       }
     }

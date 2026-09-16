@@ -105,7 +105,7 @@ Per-type extras (e.g. `ManifestJSEntry.module/entry/async/defer/deps`, `Manifest
 
 ## Building manifests: `assetcraft/manifest/build`
 
-`calculateHash(content)` computes the base64url SHA-256 used for `sha256` fields and content-hashed paths.
+`urlSafeSHA256(content)` computes the base64url SHA-256 used for `sha256` fields and content-hashed paths.
 
 `createManifestEntry({ type, mime, content, path, ... })` measures `size`, hashes `sha256`, computes `integrity`, optionally compresses. `path` is used as-is; format it with `createPathFormatter` when you want a content-hashed file name.
 
@@ -117,12 +117,12 @@ Defaults:
 - `compress: false`. Pass `true` or `CompressAssetOptions`.
 
 ```ts
-import { calculateHash, createManifestEntry, createPathFormatter } from 'assetcraft/manifest/build';
+import { urlSafeSHA256, createManifestEntry, createPathFormatter } from 'assetcraft/manifest/build';
 
 // Optional: build a content-hashed path before creating the entry.
 // Options: { dir?: string, hash?: number } (hash length, default 12).
 const formatPath = createPathFormatter({ dir: 'assets', hash: 8 });
-const path = formatPath({ path: 'src/app.js' } as never, calculateHash(code));
+const path = formatPath({ path: 'src/app.js' } as never, urlSafeSHA256(code));
 // -> assets/app-<8-char-hash>.js
 const { entry } = await createManifestEntry({ type: 'js', mime: 'application/javascript', content: code, path });
 ```
@@ -348,7 +348,7 @@ formatFileSize(1536); // '1.50KB'
 | Specifier | Exports |
 | --- | --- |
 | `assetcraft/manifest` | Types, `urlToString`, `importManifests` |
-| `assetcraft/manifest/build` | `ManifestBuilder`, `calculateHash`, `createManifestEntry`, `createPathFormatter`, `CreateManifestEntryOptions/Result`, `CreatePathFormatterOptions`, `PathFormatter`, `IntegrityAlgorithm` |
+| `assetcraft/manifest/build` | `ManifestBuilder`, `urlSafeSHA256`, `createManifestEntry`, `createPathFormatter`, `CreateManifestEntryOptions/Result`, `CreatePathFormatterOptions`, `PathFormatter`, `IntegrityAlgorithm` |
 | `assetcraft/manifest/validate` | `validateManifestEntry`, `assertManifestEntry`, `validateManifest`, `parseManifest`, `isManifestEntryType` |
 | `assetcraft/manifest/diff` | `diffManifests`, `ManifestDiff`, `ManifestChangedEntry` |
 | `assetcraft/manifest/prune` | `pruneDir`, `collectManifestPaths`, `PruneOptions` |
