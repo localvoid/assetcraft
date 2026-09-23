@@ -289,6 +289,67 @@ test('missing state is a first deploy, corrupt state throws', async () => {
   );
 });
 
+test('seed records lineage: set, preserve, explicit null, reject malformed', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
+  const manifest = [jsEntry('/s/a.js', 'dist/a.js', 'hash1')];
+  const seed = { key: 'releases/ak-release-r1.tar', sha256: 'abc123' };
+
+  // Fresh cycle without a seed records null.
+  await prepareSingle(dir.path, manifest);
+  const fresh = JSON.parse(readFileSync(join(dir.path, 'manifest.deploy.json'), 'utf8')) as Record<
+    string,
+    unknown
+  >;
+  equal(fresh['seed'], null);
+
+  // Explicit seed is recorded.
+  await prepareSingle(dir.path, manifest, { seed });
+  const seeded = JSON.parse(readFileSync(join(dir.path, 'manifest.deploy.json'), 'utf8')) as Record<
+    string,
+    unknown
+  >;
+  deepEqual(seeded['seed'], seed);
+
+  // Omitted seed preserves the loaded value.
+  await prepareSingle(dir.path, manifest);
+  const kept = JSON.parse(readFileSync(join(dir.path, 'manifest.deploy.json'), 'utf8')) as Record<
+    string,
+    unknown
+  >;
+  deepEqual(kept['seed'], seed);
+
+  // Explicit null overwrites (fresh cycle after history).
+  await prepareSingle(dir.path, manifest, { seed: null });
+  const cleared = JSON.parse(
+    readFileSync(join(dir.path, 'manifest.deploy.json'), 'utf8'),
+  ) as Record<string, unknown>;
+  equal(cleared['seed'], null);
+
+  // Malformed seed is rejected, with the field named.
+  writeFileSync(
+    join(dir.path, 'manifest.deploy.json'),
+    JSON.stringify({
+      ...(JSON.parse(readFileSync(join(dir.path, 'manifest.deploy.json'), 'utf8')) as Record<
+        string,
+        unknown
+      >),
+      seed: { key: 42 },
+    }),
+  );
+  await prepareDeploy({
+    manifests: [join(dir.path, 'manifest.json')],
+    path: join(dir.path, 'manifest.deploy.json'),
+    now: 2000,
+  }).then(
+    () => {
+      throw new Error('expected prepareDeploy to throw');
+    },
+    (err) => {
+      ok(/seed needs string key\/sha256/.test((err as Error).message));
+    },
+  );
+});
+
 test('prepareDeploy rejects invalid deploy state shapes', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
   const manifestPath = join(dir.path, 'manifest.json');

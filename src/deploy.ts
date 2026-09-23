@@ -115,6 +115,13 @@ export interface PrepareDeployOptions {
    * 365 days. Independent of file-deletion grace (`maxMissedDeploys`).
    */
   readonly purgeDuration?: number;
+  /**
+   * Seed bundle this cycle resolves history from (e.g. the previous
+   * release tarball's key and sha256). Recorded in the state file as
+   * lineage: `undefined` preserves the loaded value, anything else
+   * (including explicit `null` for a fresh cycle) overwrites it.
+   */
+  readonly seed?: DeploySeed | null;
   /** Unix seconds for this cycle. Defaults to `Math.floor(Date.now() / 1000)`. */
   readonly now?: number;
 }
@@ -200,6 +207,7 @@ export async function prepareDeploy(options: PrepareDeployOptions): Promise<Prep
   const prevDeployedAt = state?.deployedAt ?? {};
   const pending = state?.pending ?? [];
   const history = state?.history ?? [];
+  const seed = options.seed !== undefined ? options.seed : (state?.seed ?? null);
 
   checkHistory(
     loaded.flatMap((l) => l.entries),
@@ -230,7 +238,13 @@ export async function prepareDeploy(options: PrepareDeployOptions): Promise<Prep
   await updateFile(
     options.path,
     JSON.stringify(
-      { history: nextHistory, pending: plan.pendingRemove, prevManifests: snapshots, deployedAt },
+      {
+        history: nextHistory,
+        pending: plan.pendingRemove,
+        prevManifests: snapshots,
+        deployedAt,
+        seed,
+      },
       undefined,
       2,
     ),
@@ -468,6 +482,14 @@ function partitionEmbed(
   return { current, retained, skippedExternal };
 }
 
+/** Seed bundle a deploy cycle resolves history from. */
+export interface DeploySeed {
+  /** Stable store key (e.g. `releases/ak-release-<rel>.tar`). */
+  readonly key: string;
+  /** Hex sha256 of the seed payload, for integrity on fetch. */
+  readonly sha256: string;
+}
+
 /** Deploy metadata persisted between cycles in a single sidecar file. */
 interface DeployState {
   /** Immutable-asset URL-to-hash mappings. */
@@ -478,6 +500,8 @@ interface DeployState {
   readonly prevManifests: ManifestSnapshot[];
   /** Per-file deploy timestamps (source -> path -> unix seconds). */
   readonly deployedAt: DeployedAtMap;
+  /** Seed bundle the cycle resolved history from (`null` when fresh). */
+  readonly seed: DeploySeed | null;
 }
 
 /** Whether `value` is a plain object. */
@@ -505,7 +529,18 @@ function parseDeployState(data: string): DeployState {
     pending: parsePending(parsed['pending']),
     prevManifests: parsePrevManifests(parsed['prevManifests']),
     deployedAt: parseDeployedAt(parsed['deployedAt']),
+    seed: parseSeed(parsed['seed']),
   };
+}
+
+function parseSeed(value: unknown): DeploySeed | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (!isObject(value) || typeof value['key'] !== 'string' || typeof value['sha256'] !== 'string') {
+    throw new Error('Invalid deploy state: seed needs string key/sha256 (or null when fresh)');
+  }
+  return { key: value['key'], sha256: value['sha256'] };
 }
 
 function parseHistoryEntries(value: unknown): DeployHistoryEntry[] {
