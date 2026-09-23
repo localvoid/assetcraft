@@ -260,10 +260,11 @@ import { prepareDeploy } from 'assetcraft/deploy';
 
 const { plan, embed, snapshots, deployedAt } = await prepareDeploy({
   manifests: ['dist/manifest.html.json', 'dist/manifest.js.json'],
-  path: 'pub/deploy.json', // state sidecar (history + pending + snapshots + deployedAt)
+  path: 'pub/deploy.json', // state sidecar (history + pending + snapshots + deployedAt + seed)
   maxMissedDeploys: 2, // default 2; 1 = delete immediately
   external: false, // default: skip { origin, path } entries in plan/embed
   purgeDuration: 31536000, // default 365d history retention for inactive URLs, seconds
+  seed: { key: 'releases/app-r42.tar', sha256: '<hex>' }, // optional lineage; undefined preserves, null clears
   now: Math.floor(Date.now() / 1000), // default: current unix seconds
 });
 
@@ -285,6 +286,7 @@ Details:
 - `embed` expands identity + recorded `entry.compressed` variants. Variant URLs are `url + .br/.zst/.gz`. Paths resolve against each manifest's own directory. Sources combine in `manifests` order; same relative `path` in different manifests stays distinct (keyed by source + path); URLs share one global history namespace. Snapshot `dir` is resolve-only: retargeting it (e.g. at a bundle dir) never affects diffing.
 - `plan` is `{ add, remove, pendingRemove, unchanged }`. First deploy uploads everything. Hash-changed paths upload; metadata-only changes do not. Removals wait `maxMissedDeploys` consecutive missing cycles (survives one stale-HTML window), reappearing paths self-heal, removed manifest sources drain under the same grace.
 - `deployedAt` stamps new content with `now` and carries the original timestamp for unchanged/retained content (persisted per source + path).
+- `seed: DeploySeed | null` (`{ key, sha256 }`) records which seed bundle the cycle resolved history from. Omitted (`undefined`) preserves the loaded value; explicit `null` clears it for a fresh cycle. Fresh state without a seed persists `seed: null`. Malformed stored seeds throw (`seed needs string key/sha256`).
 - Safety: missing state = first deploy; corrupt state, missing/invalid manifest, duplicate manifest path, bad `maxMissedDeploys`/`now`, or immutable URL reuse with different `sha256` all throw (`Hash collision detected ...`). Mutable entries are ignored by history. Object URLs are history-tracked but excluded from `plan`/`embed` unless `external: true`.
 
 ## Serving: `assetcraft/http`
@@ -365,7 +367,7 @@ formatFileSize(1536); // '1.50KB'
 | `assetcraft/manifest/diff` | `diffManifests`, `ManifestDiff`, `ManifestChangedEntry` |
 | `assetcraft/manifest/prune` | `pruneDir`, `collectManifestPaths`, `PruneOptions` |
 | `assetcraft/compress` | `compressAsset`, `compressAssetSync`, `isCompressible`, `CompressAssetOptions/Result`, `CompressFormat` |
-| `assetcraft/deploy` | `prepareDeploy`, `PrepareDeployOptions/Result`, `DeployPlan/File`, `DeployHistoryEntry`, `PendingRemoval`, `ManifestSnapshot` |
+| `assetcraft/deploy` | `prepareDeploy`, `PrepareDeployOptions/Result`, `DeployPlan/File`, `DeploySeed`, `DeployHistoryEntry`, `PendingRemoval`, `ManifestSnapshot` |
 | `assetcraft/http` | `getCacheControl`, `getContentEncoding`, `getETag`, `getPreloadAs`, `getPreloadLink`, `getLinkHeader`, `buildResponseHeaders` + option types |
 | `assetcraft/file` | Naming, `updateFile`, cleaning, path helpers, `formatFileSize` |
 
