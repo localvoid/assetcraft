@@ -40,7 +40,9 @@ jobs:
       - uses: actions/cache@v6
         with:
           path: ${{ env.ACTION_CACHE_PATH }}
-          key: ${{ runner.os }}
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
       - run: bun install
       - run: bun run check
       - run: bun run build
