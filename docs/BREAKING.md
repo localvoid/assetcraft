@@ -1,5 +1,41 @@
 # Breaking changes
 
+## Manifest files are versioned envelopes
+
+Manifest files on disk are now versioned envelopes (`ManifestEnvelope { version, entries }`, current `MANIFEST_VERSION = 1`) instead of bare entry arrays. In-memory pipelines are unchanged: `Manifest` is still the entry list, and `ManifestBuilder`, `diffManifests`, `pruneDir`, and the deploy snapshots keep working on it (`envelope.entries`).
+
+Before (`dist/manifest.js.json`):
+
+```json
+[{ "type": "js", "mime": "application/javascript" }]
+```
+
+After:
+
+```json
+{ "version": 1, "entries": [{ "type": "js", "mime": "application/javascript" }] }
+```
+
+### 1. Wrap entries when writing manifests
+
+```ts
+await updateFile(
+  'dist/manifest.js.json',
+  JSON.stringify({ version: 1, entries: builder.entries }, null, 2),
+);
+```
+
+### 2. Unwrap after reading manifests
+
+`parseManifest` now returns a `ManifestEnvelope` (throws on bad JSON or an invalid envelope — see `validateManifestEnvelope` / `assertManifestEnvelope`); `importManifests` returns envelopes the same way:
+
+```ts
+const prev = parseManifest(await readFile('dist/manifest.js.json', 'utf8'));
+const builder = new ManifestBuilder(prev.entries);
+```
+
+`prepareDeploy` reads envelopes and is unchanged otherwise. Deploy-state files are a separate format and keep storing bare entry arrays in snapshots. Old bare-array manifest files must be re-emitted (or wrapped) — they no longer parse.
+
 ## Compression moved out of entry creation
 
 `createManifestEntry` (and its `CreateManifestEntryOptions` / `CreateManifestEntryResult` types) is removed from `assetcraft/manifest/build`. Compressing while creating entries coupled hashing/metadata with CPU-heavy encoding and forced callers to write variant buffers by hand.
@@ -85,7 +121,10 @@ for (const entry of builder.entries) {
   }
   manifest.push(Object.keys(compressed).length > 0 ? { ...entry, compressed } : entry);
 }
-await updateFile('dist/manifest.json', JSON.stringify(manifest, null, 2));
+await updateFile(
+  'dist/manifest.json',
+  JSON.stringify({ version: 1, entries: manifest }, null, 2),
+);
 ```
 
 Only variants meeting the `sizeMin` / `sizeMinDiffRatio` threshold are kept (`<path>.br`, `<path>.zst`, `<path>.gz`).

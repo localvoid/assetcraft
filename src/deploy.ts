@@ -663,7 +663,7 @@ async function loadDeployState(path: string): Promise<DeployState | undefined> {
 /** Read and parse a manifest file, wrapping errors with the file path. */
 async function loadManifestFile(path: string): Promise<Manifest> {
   try {
-    return parseManifest(await fs.readFile(path, 'utf8'));
+    return parseManifest(await fs.readFile(path, 'utf8')).entries;
   } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
       throw new Error(`Invalid manifest '${path}': file not found`);

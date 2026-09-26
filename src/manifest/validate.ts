@@ -3,8 +3,13 @@
  * (JSON files, external manifests, previous-build artifacts).
  */
 
-import type { Manifest, ManifestEntry, ManifestEntryType } from '../manifest.js';
-import { urlToString } from '../manifest.js';
+import type {
+  Manifest,
+  ManifestEnvelope,
+  ManifestEntry,
+  ManifestEntryType,
+} from '../manifest.js';
+import { MANIFEST_VERSION, urlToString } from '../manifest.js';
 
 /** All known manifest entry type discriminants. */
 const ENTRY_TYPES: ReadonlySet<string> = new Set<string>([
@@ -521,21 +526,60 @@ function isExternalURL(ref: string): boolean {
 }
 
 /**
- * Parse a manifest from a JSON string.
- * @throws On invalid JSON, non-array payloads, or invalid entries.
+ * Validate a manifest file envelope. Returns a list of human-readable
+ * problems; an empty array means the envelope is valid. Entry problems
+ * are prefixed with `entries[i]` to point into the document.
  */
-export function parseManifest(data: string): Manifest {
+export function validateManifestEnvelope(envelope: unknown): string[] {
+  if (typeof envelope !== 'object' || envelope === null || Array.isArray(envelope)) {
+    return ['envelope must be an object with version and entries'];
+  }
+  const e = envelope as Record<string, unknown>;
+  const errors: string[] = [];
+  if (e['version'] !== MANIFEST_VERSION) {
+    errors.push(`version must be ${MANIFEST_VERSION}`);
+  }
+  if (!Array.isArray(e['entries'])) {
+    errors.push('entries must be an array');
+  } else {
+    for (let i = 0; i < e['entries'].length; i++) {
+      for (const problem of validateManifestEntry(e['entries'][i])) {
+        errors.push(`entries[${i}] ${problem}`);
+      }
+    }
+  }
+  return errors;
+}
+
+/**
+ * Assert that `envelope` is a valid manifest file envelope.
+ * @throws If validation fails, with all problems listed in the message.
+ */
+export function assertManifestEnvelope(
+  envelope: unknown,
+): asserts envelope is ManifestEnvelope {
+  const errors = validateManifestEnvelope(envelope);
+  if (errors.length > 0) {
+    throw Error(`Invalid manifest envelope: ${errors.join('; ')}`);
+  }
+}
+
+/**
+ * Parse a manifest file from a JSON string.
+ * @throws On invalid JSON or an invalid envelope.
+ */
+export function parseManifest(data: string): ManifestEnvelope {
   let parsed: unknown;
   try {
     parsed = JSON.parse(data);
   } catch (error) {
     throw Error(`Invalid manifest JSON: ${(error as Error).message}`);
   }
-  const errors = validateManifest(parsed);
+  const errors = validateManifestEnvelope(parsed);
   if (errors.length > 0) {
     throw Error(`Invalid manifest: ${errors.join('; ')}`);
   }
-  return parsed as Manifest;
+  return parsed as ManifestEnvelope;
 }
 
 /** Check whether `type` is a known manifest entry type discriminant. */

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { Manifest } from '../../src/manifest.js';
-import { importManifests } from '../../src/manifest.js';
+import { MANIFEST_VERSION, importManifests } from '../../src/manifest.js';
 
 describe('importManifests', () => {
   test('returns empty array for no inputs', async () => {
@@ -37,13 +37,13 @@ describe('importManifests', () => {
     ];
     const firstPath = join(dir, 'first.manifest.json');
     const secondPath = join(dir, 'second.manifest.json');
-    await writeFile(firstPath, JSON.stringify(first));
-    await writeFile(secondPath, JSON.stringify(second));
+    await writeFile(firstPath, JSON.stringify({ version: MANIFEST_VERSION, entries: first }));
+    await writeFile(secondPath, JSON.stringify({ version: MANIFEST_VERSION, entries: second }));
 
     const result = await importManifests([firstPath, secondPath]);
     expect(result).toEqual([
-      { path: firstPath, manifest: first },
-      { path: secondPath, manifest: second },
+      { path: firstPath, manifest: { version: MANIFEST_VERSION, entries: first } },
+      { path: secondPath, manifest: { version: MANIFEST_VERSION, entries: second } },
     ]);
   });
 });

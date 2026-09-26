@@ -258,6 +258,21 @@ export type ManifestIndex = Record<string, ManifestEntry>;
 /** A manifest is an ordered list of asset entries. */
 export type Manifest = readonly ManifestEntry[];
 
+/** Version of the manifest file format written by this library. */
+export const MANIFEST_VERSION = 1;
+
+/**
+ * Manifest file envelope: versioned wrapper around an ordered entry
+ * list. Files on disk always use this shape; in-memory pipelines keep
+ * working on the bare {@link Manifest} entry list (`envelope.entries`).
+ */
+export interface ManifestEnvelope {
+  /** File format version (currently the only supported version). */
+  version: typeof MANIFEST_VERSION;
+  /** Asset entries, in order. */
+  entries: Manifest;
+}
+
 /** Helpers section */
 
 /**
@@ -270,11 +285,12 @@ export function urlToString(url: ManifestEntry['url']): string {
 }
 
 /**
- * Dynamically import one or more JSON manifest files.
+ * Dynamically import one or more JSON manifest files. Each file must
+ * hold a {@link ManifestEnvelope}.
  */
 export async function importManifests(
   manifests: string[],
-): Promise<{ path: string; manifest: Manifest }[]> {
+): Promise<{ path: string; manifest: ManifestEnvelope }[]> {
   const result = [];
   for (const path of manifests) {
     const manifest = (await import(path, { with: { type: 'json' } })).default;

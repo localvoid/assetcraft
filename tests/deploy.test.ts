@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path';
 import type { PrepareDeployOptions } from '../src/deploy.js';
 import type { Manifest, ManifestEntry } from '../src/manifest.js';
 import { prepareDeploy } from '../src/deploy.js';
-import { urlToString } from '../src/manifest.js';
+import { MANIFEST_VERSION, urlToString } from '../src/manifest.js';
 
 function jsEntry(
   url: string,
@@ -30,7 +30,7 @@ function jsEntry(
 
 function writeManifest(path: string, manifest: Manifest): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(manifest));
+  writeFileSync(path, JSON.stringify({ version: MANIFEST_VERSION, entries: manifest }));
 }
 
 /** Run a single-manifest deploy cycle with a temp-dir sidecar. */

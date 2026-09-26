@@ -1,13 +1,16 @@
 import { describe, expect, test } from 'bun:test';
 
 import type { Manifest } from '../../src/manifest.js';
+import { MANIFEST_VERSION } from '../../src/manifest.js';
 import {
   assertManifestEntry,
+  assertManifestEnvelope,
   assertManifestReferences,
   isManifestEntryType,
   parseManifest,
   validateManifest,
   validateManifestEntry,
+  validateManifestEnvelope,
   validateManifestReferences,
 } from '../../src/manifest/validate.js';
 
@@ -512,23 +515,96 @@ describe('validateManifestReferences', () => {
   });
 });
 
+describe('validateManifestEnvelope', () => {
+  function envelope(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return { version: MANIFEST_VERSION, entries: [validEntry()], ...overrides };
+  }
+
+  test('accepts a valid envelope', () => {
+    expect(validateManifestEnvelope(envelope())).toEqual([]);
+  });
+
+  test('rejects non-objects', () => {
+    for (const bad of [null, undefined, 42, 'manifest', []]) {
+      expect(validateManifestEnvelope(bad)).toEqual([
+        'envelope must be an object with version and entries',
+      ]);
+    }
+  });
+
+  test('rejects missing or unsupported versions', () => {
+    for (const version of [undefined, 0, 2, '1', null]) {
+      expect(validateManifestEnvelope(envelope({ version }))).toContain(
+        `version must be ${MANIFEST_VERSION}`,
+      );
+    }
+  });
+
+  test('rejects non-array entries', () => {
+    expect(validateManifestEnvelope(envelope({ entries: {} }))).toContain(
+      'entries must be an array',
+    );
+  });
+
+  test('prefixes entry problems with entries[i]', () => {
+    const errors = validateManifestEnvelope(envelope({ entries: [validEntry({ path: '' })] }));
+    expect(errors).toEqual(['entries[0] path must be a non-empty string']);
+  });
+
+  test('collects envelope and entry problems together', () => {
+    const errors = validateManifestEnvelope({ version: 2, entries: [validEntry({ path: '' })] });
+    expect(errors).toEqual([
+      `version must be ${MANIFEST_VERSION}`,
+      'entries[0] path must be a non-empty string',
+    ]);
+  });
+});
+
+describe('assertManifestEnvelope', () => {
+  test('passes for valid envelopes', () => {
+    expect(() =>
+      assertManifestEnvelope({ version: MANIFEST_VERSION, entries: [validEntry()] }),
+    ).not.toThrow();
+  });
+
+  test('throws listing all problems', () => {
+    let error: unknown;
+    try {
+      assertManifestEnvelope({ version: 2, entries: 'nope' });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeDefined();
+    expect((error as Error).message).toContain('Invalid manifest envelope: ');
+    expect((error as Error).message).toContain(`version must be ${MANIFEST_VERSION}`);
+    expect((error as Error).message).toContain('entries must be an array');
+  });
+});
+
 describe('parseManifest', () => {
-  test('parses a valid JSON manifest', () => {
+  test('parses a valid JSON manifest envelope', () => {
     const entry = validEntry();
-    const manifest = parseManifest(JSON.stringify([entry]));
-    expect(manifest as unknown).toEqual([entry]);
+    const manifest = parseManifest(
+      JSON.stringify({ version: MANIFEST_VERSION, entries: [entry] }),
+    );
+    expect(manifest as unknown).toEqual({ version: MANIFEST_VERSION, entries: [entry] });
   });
 
   test('throws on invalid JSON', () => {
     expect(() => parseManifest('{nope')).toThrow('Invalid manifest JSON: ');
   });
 
-  test('throws on non-array payload', () => {
-    expect(() => parseManifest('{}')).toThrow('Invalid manifest: manifest must be an array');
+  test('throws on non-envelope payloads', () => {
+    expect(() => parseManifest('{}')).toThrow('Invalid manifest: ');
+    expect(() => parseManifest('[]')).toThrow('envelope must be an object');
   });
 
   test('throws on invalid entries with index', () => {
-    expect(() => parseManifest(JSON.stringify([validEntry({ path: '' })]))).toThrow('[0]');
+    expect(() =>
+      parseManifest(
+        JSON.stringify({ version: MANIFEST_VERSION, entries: [validEntry({ path: '' })] }),
+      ),
+    ).toThrow('entries[0]');
   });
 });
 
