@@ -1,11 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 
+import type { Manifest } from '../../src/manifest.js';
 import {
   assertManifestEntry,
+  assertManifestReferences,
   isManifestEntryType,
   parseManifest,
   validateManifest,
   validateManifestEntry,
+  validateManifestReferences,
 } from '../../src/manifest/validate.js';
 
 function validEntry(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -310,6 +313,202 @@ describe('validateManifest', () => {
     expect(errors).toHaveLength(1);
     expect(errors.join('\n')).toContain('[1]');
     expect(errors.join('\n')).toContain('path must be a non-empty string');
+  });
+});
+
+describe('validateManifestReferences', () => {
+  function refEntry(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      type: 'js',
+      mime: 'application/javascript',
+      url: '/assets/app.js',
+      path: 'assets/app.js',
+      sha256: 'abcDEF123-_',
+      size: 128,
+      ...overrides,
+    };
+  }
+
+  function manifestOf(...entries: Record<string, unknown>[]): Manifest {
+    return entries as unknown as Manifest;
+  }
+
+  function linkedSet(): Manifest {
+    return manifestOf(
+      refEntry({
+        symbols: 'assets/app.js.map',
+        deps: ['/assets/dep.js'],
+        preload: [{ url: '/assets/dep.js' }],
+      }),
+      refEntry({ url: '/assets/dep.js', path: 'assets/dep.js' }),
+      {
+        type: 'sourcemap',
+        mime: 'application/json',
+        url: '/assets/app.js.map',
+        path: 'assets/app.js.map',
+        sha256: 'mapDEF123-_',
+        size: 64,
+        source: 'assets/app.js',
+      },
+      {
+        type: 'video',
+        mime: 'video/mp4',
+        url: '/assets/clip.mp4',
+        path: 'assets/clip.mp4',
+        sha256: 'vidDEF123-_',
+        size: 1024,
+        poster: '/assets/poster.jpg',
+      },
+      {
+        type: 'image',
+        mime: 'image/jpeg',
+        url: '/assets/poster.jpg',
+        path: 'assets/poster.jpg',
+        sha256: 'imgDEF123-_',
+        size: 512,
+      },
+      {
+        type: 'image',
+        mime: 'image/jpeg',
+        url: '/assets/photo.jpg',
+        path: 'assets/photo.jpg',
+        sha256: 'phoDEF123-_',
+        size: 256,
+        srcset: [{ url: '/assets/photo-2x.jpg', density: 2 }],
+      },
+      {
+        type: 'image',
+        mime: 'image/jpeg',
+        url: '/assets/photo-2x.jpg',
+        path: 'assets/photo-2x.jpg',
+        sha256: 'ph2DEF123-_',
+        size: 512,
+      },
+    );
+  }
+
+  test('accepts empty and reference-free manifests', () => {
+    expect(validateManifestReferences([])).toEqual([]);
+    expect(validateManifestReferences(manifestOf(refEntry()))).toEqual([]);
+  });
+
+  test('accepts a fully linked manifest set', () => {
+    expect(validateManifestReferences(linkedSet())).toEqual([]);
+  });
+
+  test('reports dangling pipeline references', () => {
+    expect(
+      validateManifestReferences(manifestOf(refEntry({ symbols: 'assets/missing.js.map' }))),
+    ).toEqual(["[0] symbols 'assets/missing.js.map' matches no manifest entry path"]);
+    expect(
+      validateManifestReferences(
+        manifestOf({
+          type: 'sourcemap',
+          mime: 'application/json',
+          url: '/assets/app.js.map',
+          path: 'assets/app.js.map',
+          sha256: 'mapDEF123-_',
+          size: 64,
+          source: 'assets/missing.js',
+        }),
+      ),
+    ).toEqual(["[0] source 'assets/missing.js' matches no manifest entry path"]);
+  });
+
+  test('requires symbols to point at a sourcemap entry', () => {
+    expect(
+      validateManifestReferences(manifestOf(refEntry({ symbols: 'assets/app.js' }))),
+    ).toEqual(["[0] symbols 'assets/app.js' must reference a 'sourcemap' entry (found 'js')"]);
+  });
+
+  test('reports dangling serving references', () => {
+    expect(
+      validateManifestReferences(
+        manifestOf(
+          refEntry({
+            deps: ['/assets/missing.js'],
+            preload: [{ url: '/assets/other.js' }],
+            poster: '/missing.jpg',
+            srcset: [{ url: '/missing-2x.jpg' }],
+          }),
+        ),
+      ),
+    ).toEqual([
+      "[0] deps[0] '/assets/missing.js' matches no manifest entry url",
+      "[0] preload[0].url '/assets/other.js' matches no manifest entry url",
+      "[0] poster '/missing.jpg' matches no manifest entry url",
+      "[0] srcset[0].url '/missing-2x.jpg' matches no manifest entry url",
+    ]);
+  });
+
+  test('skips absolute serving references unless checkExternalUrls is set', () => {
+    const manifest = manifestOf(
+      refEntry({
+        preload: [
+          { url: 'https://cdn.example/font.woff2' },
+          { url: '//cdn.example/other.woff2' },
+        ],
+      }),
+    );
+    expect(validateManifestReferences(manifest)).toEqual([]);
+    expect(validateManifestReferences(manifest, { checkExternalUrls: true })).toEqual([
+      "[0] preload[0].url 'https://cdn.example/font.woff2' matches no manifest entry url",
+      "[0] preload[1].url '//cdn.example/other.woff2' matches no manifest entry url",
+    ]);
+  });
+
+  test('honors the ignore list', () => {
+    const manifest = manifestOf(refEntry({ preload: [{ url: '/api/config', as: 'fetch' }] }));
+    expect(validateManifestReferences(manifest)).toEqual([
+      "[0] preload[0].url '/api/config' matches no manifest entry url",
+    ]);
+    expect(validateManifestReferences(manifest, { ignore: ['/api/config'] })).toEqual([]);
+  });
+
+  test('resolves references across manifests with per-manifest indexes', () => {
+    const vendor = manifestOf(refEntry({ url: '/vendor/lib.js', path: 'vendor/lib.js' }));
+    expect(
+      validateManifestReferences([manifestOf(refEntry({ deps: ['/vendor/lib.js'] })), vendor]),
+    ).toEqual([]);
+    expect(
+      validateManifestReferences([manifestOf(refEntry({ deps: ['/vendor/missing.js'] })), vendor]),
+    ).toEqual(["[0][0] deps[0] '/vendor/missing.js' matches no manifest entry url"]);
+  });
+
+  test('matches object-form urls by origin and path', () => {
+    const manifest = manifestOf(
+      refEntry({ preload: [{ url: 'https://cdn.example/assets/a.js' }] }),
+      {
+        ...refEntry(),
+        url: { origin: 'https://cdn.example', path: '/assets/a.js' },
+        path: 'assets/a.js',
+      },
+    );
+    expect(validateManifestReferences(manifest)).toEqual([]);
+  });
+
+  test('ignores non-string and non-object values', () => {
+    expect(
+      validateManifestReferences(
+        manifestOf(refEntry({ symbols: 42, deps: 'x', poster: null, preload: [42], srcset: 'x' })),
+      ),
+    ).toEqual([]);
+    expect(validateManifestReferences([[null, 42]] as unknown as Manifest[])).toEqual([]);
+  });
+
+  test('assertManifestReferences throws listing all problems', () => {
+    expect(() => assertManifestReferences(linkedSet())).not.toThrow();
+    let error: unknown;
+    try {
+      assertManifestReferences(manifestOf(refEntry({ symbols: 'assets/missing.js.map' })));
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeDefined();
+    expect((error as Error).message).toContain('Invalid manifest references: ');
+    expect((error as Error).message).toContain(
+      "[0] symbols 'assets/missing.js.map' matches no manifest entry path",
+    );
   });
 });
 

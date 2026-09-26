@@ -40,7 +40,10 @@ export interface ManifestCompressedVariants {
 
 /** Candidate of a responsive image (`srcset` entry). */
 export interface ManifestImageCandidate {
-  /** Public URL of the candidate. */
+  /**
+   * Public URL of the candidate. Should match another entry's public
+   * URL (see `validateManifestReferences` in `assetcraft/manifest/validate`).
+   */
   url: string;
   /** Intrinsic width in pixels (for `w` descriptors). */
   width?: number;
@@ -54,7 +57,10 @@ export interface ManifestImageCandidate {
  * `assetcraft/http`).
  */
 export interface ManifestPreload {
-  /** Public URL of the preloaded resource. */
+  /**
+   * Public URL of the preloaded resource. Should match another entry's
+   * public URL (see `validateManifestReferences` in `assetcraft/manifest/validate`).
+   */
   url: string;
   /** Link `as` value (e.g. `"script"`, `"style"`, `"image"`, `"font"`). */
   as?: string;
@@ -113,8 +119,11 @@ export interface ManifestBaseEntry<T extends ManifestEntryType> {
    */
   preload?: ManifestPreload[];
   /**
-   * Path or URL of the external debug information for this asset (a
-   * source map for JS/CSS/WASM, a symbol file for native binaries, …).
+   /**
+   * Output-relative path of the external debug information for this
+   * asset (a source map for JS/CSS/WASM, a symbol file for native
+   * binaries, …). Must match another entry's `path` (see
+   * `validateManifestReferences` in `assetcraft/manifest/validate`).
    */
   symbols?: string;
 }
@@ -128,7 +137,11 @@ export interface ManifestJSEntry extends ManifestBaseEntry<'js'> {
   async?: boolean;
   /** Emit `<script defer>`. */
   defer?: boolean;
-  /** Dependencies to preload (consumed as modulepreload `Link` headers). */
+  /**
+   * Public URLs of dependencies to preload (consumed as modulepreload
+   * `Link` headers). Each should match another entry's public URL (see
+   * `validateManifestReferences` in `assetcraft/manifest/validate`).
+   */
   deps?: string[];
 }
 export interface ManifestWASMEntry extends ManifestBaseEntry<'wasm'> {
@@ -196,7 +209,11 @@ export interface ManifestVideoEntry extends ManifestBaseEntry<'video'> {
   height?: number;
   /** Duration in seconds. */
   duration?: number;
-  /** Poster image URL for `<video poster>` generation. */
+  /**
+   * Public URL of the poster image for `<video poster>` generation.
+   * Should match another entry's public URL (see
+   * `validateManifestReferences` in `assetcraft/manifest/validate`).
+   */
   poster?: string;
 }
 export interface ManifestTextEntry extends ManifestBaseEntry<'text'> {
@@ -205,7 +222,11 @@ export interface ManifestTextEntry extends ManifestBaseEntry<'text'> {
 }
 export interface ManifestBinaryEntry extends ManifestBaseEntry<'binary'> {}
 export interface ManifestSourceMapEntry extends ManifestBaseEntry<'sourcemap'> {
-  /** Path or URL of the asset this source map describes. */
+  /**
+   * Output-relative path of the asset this source map describes. Must
+   * match another entry's `path` (see `validateManifestReferences` in
+   * `assetcraft/manifest/validate`).
+   */
   source?: string;
 }
 

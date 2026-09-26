@@ -127,6 +127,25 @@ Per-type extras (e.g. `ManifestJSEntry.module/entry/async/defer/deps`, `Manifest
 
 `urlToString(url)` normalizes both URL forms. `importManifests([paths])` dynamically imports JSON manifests with `{ with: { type: 'json' } }` and returns `{ path, manifest }[]` in order.
 
+### Entry references
+
+References between entries come in two kinds, checked by `validateManifestReferences` in `assetcraft/manifest/validate`:
+
+| Kind | Fields | Form | Resolves against |
+| --- | --- | --- | --- |
+| Serving (emitted into HTML/headers) | `deps`, `preload[].url`, `srcset[].url`, `poster` | public URL | another entry's public URL (`urlToString`) |
+| Pipeline (build/deploy tooling) | `symbols`, `source` | output-relative disk path | another entry's `path` |
+
+```ts
+import { validateManifestReferences } from 'assetcraft/manifest/validate';
+
+// Pass every manifest in the set, including imported externals.
+validateManifestReferences([appManifest, vendorManifest]); // [] = all references resolve
+validateManifestReferences(manifest, { ignore: ['https://fonts.googleapis.com/css2'] });
+```
+
+Absolute (`scheme://…`, `//…`) serving references are assumed third-party and skipped unless `checkExternalUrls: true`; `ignore` skips anything else (e.g. API routes rendered from `preload`). Pipeline references are always checked — a path that matches no entry is never deployed or pruned correctly. `symbols` must additionally point at a `sourcemap` entry. `match`/`matchDest` are substring patterns, not references, and are not checked.
+
 ## Building manifests: `assetcraft/manifest/build`
 
 `urlSafeSHA256(content)` computes the base64url SHA-256 used for `sha256` fields and content-hashed paths. `computeIntegrity(content, algo)` computes the SRI string (`sha256 | sha384 | sha512`).
@@ -194,6 +213,8 @@ import {
 validateManifestEntry(unknown); // string[] problems, [] = valid
 assertManifestEntry(unknown); // throws `Invalid manifest entry: ...`
 validateManifest(unknown); // per-index `[i] ...` problems
+validateManifestReferences(manifests, options?); // dangling `deps`/`preload`/`srcset`/`poster`/`symbols`/`source`
+assertManifestReferences(manifests, options?); // throws `Invalid manifest references: ...`
 parseManifest(jsonText); // throws on bad JSON / non-array / invalid entries
 isManifestEntryType(type); // type guard
 ```
@@ -364,7 +385,7 @@ formatFileSize(1536); // '1.50KB'
 | --- | --- |
 | `assetcraft/manifest` | Types, `urlToString`, `importManifests` |
 | `assetcraft/manifest/build` | `ManifestBuilder`, `urlSafeSHA256`, `computeIntegrity`, `createPathFormatter`, `CreatePathFormatterOptions`, `PathFormatter`, `IntegrityAlgorithm`, `ManifestEntryFor` |
-| `assetcraft/manifest/validate` | `validateManifestEntry`, `assertManifestEntry`, `validateManifest`, `parseManifest`, `isManifestEntryType` |
+| `assetcraft/manifest/validate` | `validateManifestEntry`, `assertManifestEntry`, `validateManifest`, `validateManifestReferences`, `assertManifestReferences`, `ValidateReferencesOptions`, `parseManifest`, `isManifestEntryType` |
 | `assetcraft/manifest/diff` | `diffManifests`, `ManifestDiff`, `ManifestChangedEntry` |
 | `assetcraft/manifest/prune` | `pruneDir`, `collectManifestPaths`, `PruneOptions` |
 | `assetcraft/compress` | `compressAsset`, `compressAssetSync`, `isCompressible`, `CompressAssetOptions/Result`, `CompressFormat` |

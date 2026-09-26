@@ -4,6 +4,7 @@
  */
 
 import type { Manifest, ManifestEntry, ManifestEntryType } from '../manifest.js';
+import { urlToString } from '../manifest.js';
 
 /** All known manifest entry type discriminants. */
 const ENTRY_TYPES: ReadonlySet<string> = new Set<string>([
@@ -353,6 +354,170 @@ export function validateManifest(manifest: unknown): string[] {
     }
   }
   return errors;
+}
+
+/** Options for {@link validateManifestReferences}. */
+export interface ValidateReferencesOptions {
+  /**
+   * Reference strings to skip (e.g. third-party preload URLs or API
+   * routes rendered from `preload`). Matched against the raw reference
+   * before any other rule.
+   */
+  readonly ignore?: readonly string[];
+  /**
+   * Also check absolute (`scheme://…` or `//…`) serving references.
+   * Defaults to `false`: absolute URLs are assumed third-party and
+   * skipped. Pipeline references (`symbols`, `source`) are always
+   * checked — output-relative paths are never external.
+   */
+  readonly checkExternalUrls?: boolean;
+}
+
+/**
+ * Check that cross-entry references resolve within `manifests`.
+ *
+ * References come in two kinds: serving references (`deps`,
+ * `preload[].url`, `srcset[].url`, `poster`) are public URLs and must
+ * match another entry's public URL (object-form URLs compare by
+ * `origin + path`, see `urlToString` in `assetcraft/manifest`);
+ * pipeline references (`symbols`, `source`) are output-relative disk
+ * paths and must match another entry's `path`. `symbols` must
+ * additionally point at a `sourcemap` entry. Non-string values are
+ * ignored (they are reported by {@link validateManifestEntry} instead).
+ *
+ * Pass the full manifest set, including imported external manifests —
+ * unlike {@link validateManifest}, references may legitimately target
+ * entries from another manifest in the set.
+ *
+ * Problems are prefixed with the entry index (`[i]`, or `[m][i]` when
+ * several manifests are given); an empty array means all references
+ * resolve.
+ */
+export function validateManifestReferences(
+  manifests: Manifest | Manifest[],
+  options?: ValidateReferencesOptions,
+): string[] {
+  const list = asManifestList(manifests);
+  const byPath = new Map<string, ManifestEntry>();
+  const byURL = new Map<string, ManifestEntry>();
+  for (const manifest of list) {
+    for (const entry of manifest) {
+      if (typeof entry !== 'object' || entry === null) {
+        continue;
+      }
+      if (!byPath.has(entry.path)) {
+        byPath.set(entry.path, entry);
+      }
+      const url = urlToString(entry.url);
+      if (!byURL.has(url)) {
+        byURL.set(url, entry);
+      }
+    }
+  }
+  const ignored = new Set(options?.ignore ?? []);
+  const checkExternal = options?.checkExternalUrls === true;
+  const errors: string[] = [];
+  const checkPathReference = (prefix: string, key: string, value: unknown) => {
+    if (typeof value !== 'string' || ignored.has(value)) {
+      return;
+    }
+    const target = byPath.get(value);
+    if (target === undefined) {
+      errors.push(`${prefix} ${key} '${value}' matches no manifest entry path`);
+    } else if (key === 'symbols' && target.type !== 'sourcemap') {
+      // NOTE: allow future native debug-symbol entry types here.
+      errors.push(
+        `${prefix} ${key} '${value}' must reference a 'sourcemap' entry (found '${target.type}')`,
+      );
+    }
+  };
+  const checkURLReference = (prefix: string, label: string, value: unknown) => {
+    if (typeof value !== 'string' || ignored.has(value)) {
+      return;
+    }
+    if (isExternalURL(value) && !checkExternal) {
+      return;
+    }
+    if (!byURL.has(value)) {
+      errors.push(`${prefix} ${label} '${value}' matches no manifest entry url`);
+    }
+  };
+  list.forEach((manifest, m) => {
+    manifest.forEach((entry, i) => {
+      if (typeof entry !== 'object' || entry === null) {
+        return;
+      }
+      const prefix = list.length > 1 ? `[${m}][${i}]` : `[${i}]`;
+      const e = entry as unknown as Record<string, unknown>;
+      checkPathReference(prefix, 'symbols', e['symbols']);
+      checkPathReference(prefix, 'source', e['source']);
+      const deps = e['deps'];
+      if (Array.isArray(deps)) {
+        deps.forEach((dep, d) => {
+          checkURLReference(prefix, `deps[${d}]`, dep);
+        });
+      }
+      const preload = e['preload'];
+      if (Array.isArray(preload)) {
+        preload.forEach((item, p) => {
+          if (typeof item === 'object' && item !== null) {
+            checkURLReference(
+              prefix,
+              `preload[${p}].url`,
+              (item as unknown as Record<string, unknown>)['url'],
+            );
+          }
+        });
+      }
+      checkURLReference(prefix, 'poster', e['poster']);
+      const srcset = e['srcset'];
+      if (Array.isArray(srcset)) {
+        srcset.forEach((candidate, s) => {
+          if (typeof candidate === 'object' && candidate !== null) {
+            checkURLReference(
+              prefix,
+              `srcset[${s}].url`,
+              (candidate as unknown as Record<string, unknown>)['url'],
+            );
+          }
+        });
+      }
+    });
+  });
+  return errors;
+}
+
+/**
+ * Assert that all cross-entry references resolve within `manifests`.
+ * @throws If validation fails, with all problems listed in the message.
+ */
+export function assertManifestReferences(
+  manifests: Manifest | Manifest[],
+  options?: ValidateReferencesOptions,
+): void {
+  const errors = validateManifestReferences(manifests, options);
+  if (errors.length > 0) {
+    throw Error(`Invalid manifest references: ${errors.join('; ')}`);
+  }
+}
+
+/**
+ * Normalize a single manifest or a list of manifests to a list (same
+ * array ambiguity as in `assetcraft/manifest/prune`).
+ */
+function asManifestList(manifests: Manifest | Manifest[]): Manifest[] {
+  // Note: Array.isArray can't discriminate Manifest from Manifest[] (both
+  // are arrays), so inspect the first element instead.
+  const head: unknown = (manifests as Manifest)[0];
+  return Array.isArray(head) ? (manifests as Manifest[]) : [manifests as Manifest];
+}
+
+/**
+ * Whether a serving reference is absolute (`scheme://…` or `//…`) and
+ * therefore potentially third-party.
+ */
+function isExternalURL(ref: string): boolean {
+  return ref.startsWith('//') || /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(ref);
 }
 
 /**
