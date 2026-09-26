@@ -1,4 +1,3 @@
-import type { Manifest, ManifestEntry } from 'assetcraft/manifest';
 import { test } from 'bun:test';
 import { deepEqual, equal, ok } from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -7,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import type { PrepareDeployOptions } from '../src/deploy.js';
+import type { Manifest, ManifestEntry } from '../src/manifest.js';
 import { prepareDeploy } from '../src/deploy.js';
 import { urlToString } from '../src/manifest.js';
 
