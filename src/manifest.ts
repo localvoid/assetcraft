@@ -112,6 +112,11 @@ export interface ManifestBaseEntry<T extends ManifestEntryType> {
    * `getPreloadLink` / `buildResponseHeaders` in `assetcraft/http`).
    */
   preload?: ManifestPreload[];
+  /**
+   * Path or URL of the external debug information for this asset (a
+   * source map for JS/CSS/WASM, a symbol file for native binaries, …).
+   */
+  symbols?: string;
 }
 
 export interface ManifestJSEntry extends ManifestBaseEntry<'js'> {

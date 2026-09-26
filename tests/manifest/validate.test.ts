@@ -157,6 +157,13 @@ describe('validateManifestEntry', () => {
     ).toEqual([]);
   });
 
+  test('accepts an optional debug symbols reference', () => {
+    expect(validateManifestEntry(validEntry({ symbols: '/assets/app.js.map' }))).toEqual([]);
+    expect(validateManifestEntry(validEntry({ symbols: 42 }))).toContain(
+      'symbols must be a string',
+    );
+  });
+
   test('rejects bad serving metadata', () => {
     expect(validateManifestEntry(validEntry({ integrity: 'md5-abc' }))).toContain(
       'integrity must be an SRI string (e.g. "sha384-…")',

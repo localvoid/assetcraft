@@ -121,6 +121,7 @@ Common base fields:
 | `compressed?` | `{ br/zst/gz?: { path, size, sha256? } }` |
 | `crossorigin?`, `fetchPriority?` | HTML generation hints |
 | `preload?: ManifestPreload[]` | Rendered as `Link: <url>; rel=preload; …` |
+| `symbols?` | Path or URL of the external debug information for this asset |
 
 Per-type extras (e.g. `ManifestJSEntry.module/entry/async/defer/deps`, `ManifestImageEntry.width/height/srcset/loading/decoding`, `ManifestFontEntry.family/weight/style/display`, `ManifestVideoEntry.poster/duration`, `ManifestHTMLEntry.title/lang/isEntry/isFallback`, `ManifestSourceMapEntry.source`, `ManifestCompressionDictionaryEntry.match/matchDest`) are in `src/manifest.ts`. Check `isManifestEntryType(type)` to narrow unknown input.
 

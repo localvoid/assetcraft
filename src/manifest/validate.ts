@@ -261,6 +261,7 @@ function validateTypeMeta(e: Record<string, unknown>): string[] {
     'lang',
     'charset',
     'source',
+    'symbols',
   ]) {
     checkString(key);
   }
