@@ -36,13 +36,15 @@ export interface ManifestDiff {
  * are reported as changed.
  */
 export function diffManifests(prev: Manifest, next: Manifest): ManifestDiff {
+  const prevEntries = prev.entries;
+  const nextEntries = next.entries;
   const prevByPath = new Map<string, ManifestEntry>();
-  for (const entry of prev) {
+  for (const entry of prevEntries) {
     prevByPath.set(entry.path, entry);
   }
   const diff: ManifestDiff = { added: [], removed: [], changed: [], unchanged: [] };
   const seen = new Set<string>();
-  for (const entry of next) {
+  for (const entry of nextEntries) {
     seen.add(entry.path);
     const old = prevByPath.get(entry.path);
     if (old === undefined) {
@@ -53,7 +55,7 @@ export function diffManifests(prev: Manifest, next: Manifest): ManifestDiff {
       diff.changed.push({ prev: old, next: entry, hashChanged: old.sha256 !== entry.sha256 });
     }
   }
-  for (const entry of prev) {
+  for (const entry of prevEntries) {
     if (!seen.has(entry.path)) {
       diff.removed.push(entry);
     }

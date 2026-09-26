@@ -37,6 +37,8 @@ Entry `path` is the output-relative disk path. Entry `url` is the public URL (st
 ```ts
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import type { Manifest, ManifestEntry } from 'assetcraft/manifest';
+import { MANIFEST_VERSION } from 'assetcraft/manifest';
 import { ManifestBuilder, computeIntegrity, urlSafeSHA256 } from 'assetcraft/manifest/build';
 import { compressAsset, isCompressible } from 'assetcraft/compress';
 import { pruneDir } from 'assetcraft/manifest/prune';
@@ -67,11 +69,11 @@ const entry = builder.getByPath(path)!;
 await mkdir(join(outDir, dirname(entry.path)), { recursive: true });
 await writeFile(join(outDir, entry.path), bytes);
 
-const manifest = [];
+const entries: ManifestEntry[] = [];
 for (const e of builder.entries) {
   const selected = e.compressible ?? isCompressible(e);
   if (!selected) {
-    manifest.push(e);
+    entries.push(e);
     continue;
   }
   const content = await readFile(join(outDir, e.path));
@@ -82,16 +84,14 @@ for (const e of builder.entries) {
     await writeFile(join(outDir, variantPath), data);
     compressed[format] = { path: variantPath, size: data.length, sha256: urlSafeSHA256(data) };
   }
-  manifest.push(Object.keys(compressed).length > 0 ? { ...e, compressed } : e);
+  entries.push(Object.keys(compressed).length > 0 ? { ...e, compressed } : e);
 }
+const manifest: Manifest = { version: MANIFEST_VERSION, entries };
 
-await updateFile(
-  'dist/manifest.js.json',
-  JSON.stringify({ version: 1, entries: manifest }, null, 2),
-);
+await updateFile('dist/manifest.js.json', JSON.stringify(manifest, null, 2));
 
 // Delete stale hashed files left by previous builds.
-// Entries are relative to `dist`, so prune `dist` and keep the manifest itself.
+// Entry paths are relative to `dist`, so prune `dist` and keep the manifest itself.
 await pruneDir(outDir, manifest, {
   ignore: ['manifest.js.json'],
   compressedSuffixes: ['.br', '.zst', '.gz'],
@@ -102,9 +102,9 @@ Then deploy and serve (see `Deploy` and `Serving` sections).
 
 ## Manifest entries
 
-`assetcraft/manifest` exports the `Manifest` (`ManifestEntry[]`), `ManifestIndex`, per-type interfaces, `urlToString`, and `importManifests`.
+`assetcraft/manifest` exports the `Manifest` (`{ version, entries }`), `ManifestIndex`, per-type interfaces, `urlToString`, and `importManifests`.
 
-On disk, manifests are versioned envelopes (`ManifestEnvelope { version, entries }`, current `MANIFEST_VERSION = 1`); in memory, pipelines work on the bare `Manifest` entry list (`envelope.entries`).
+Manifests are versioned (`Manifest { version, entries }`, current `MANIFEST_VERSION = 1`). Pipeline helpers (`ManifestBuilder`, `diffManifests`, `pruneDir`, `validateManifestReferences`, deploy) take `Manifest` directly — reach into `manifest.entries` for the raw entry list.
 
 Entry types (`ManifestEntryType`): `js`, `wasm`, `html`, `css`, `font`, `image`, `svg`, `audio`, `video`, `text`, `binary`, `sourcemap`, `compression-dictionary`.
 
@@ -130,7 +130,7 @@ Common base fields:
 
 Per-type extras (e.g. `ManifestJSEntry.module/entry/async/defer/deps`, `ManifestImageEntry.width/height/srcset/loading/decoding`, `ManifestFontEntry.family/weight/style/display`, `ManifestVideoEntry.poster/duration`, `ManifestHTMLEntry.title/lang/isEntry/isFallback`, `ManifestSourceMapEntry.source`, `ManifestCompressionDictionaryEntry.match/matchDest`) are in `src/manifest.ts`. Check `isManifestEntryType(type)` to narrow unknown input.
 
-`urlToString(url)` normalizes both URL forms. `importManifests([paths])` dynamically imports JSON manifest envelopes with `{ with: { type: 'json' } }` and returns `{ path, manifest }[]` in order, where each `manifest` is a `ManifestEnvelope`.
+`urlToString(url)` normalizes both URL forms. `importManifests([paths])` dynamically imports JSON manifests with `{ with: { type: 'json' } }` and returns `{ path, manifest }[]` in order, where each `manifest` is a `Manifest`.
 
 ### Entry references
 
@@ -188,7 +188,7 @@ import { parseManifest } from 'assetcraft/manifest/validate';
 const prev = parseManifest(
   await readFile('dist/manifest.js.json', 'utf8').catch(() => '{"version":1,"entries":[]}'),
 );
-const builder = new ManifestBuilder(prev.entries);
+const builder = new ManifestBuilder(prev);
 builder.add(entry); // returns index; throws on duplicate path/name or URL+other-hash
 builder.upsert(entry); // replace by path, keep position; failed upsert leaves old entry
 builder.import(externalManifest); // index-only, not in `.entries`; locals shadow by key
@@ -199,10 +199,7 @@ builder.getByPath('assets/app-abc123.js');
 builder.getByURL('/assets/app-abc123.js'); // object URLs keyed as origin+path
 builder.getByTag('app'); // locals first, then unshadowed externals
 builder.listByType('js');
-await updateFile(
-  'dist/manifest.js.json',
-  JSON.stringify({ version: 1, entries: builder.entries }, null, 2),
-);
+await updateFile('dist/manifest.js.json', JSON.stringify(builder.toManifest(), null, 2));
 ```
 
 Rules: duplicate `path` always throws; duplicate `name` throws; same URL with different `sha256` throws; same URL with same hash is idempotent. External entries are visible to lookups but `builder.entries` contains only locals.
@@ -217,15 +214,16 @@ import {
   isManifestEntryType,
   parseManifest,
   validateManifest,
+  validateManifestEntries,
   validateManifestEntry,
 } from 'assetcraft/manifest/validate';
 
 validateManifestEntry(unknown); // string[] problems, [] = valid
 assertManifestEntry(unknown); // throws `Invalid manifest entry: ...`
-validateManifest(unknown); // per-index `[i] ...` problems
-validateManifestEnvelope(unknown); // envelope problems, entries as `entries[i] ...`
-assertManifestEnvelope(unknown); // throws `Invalid manifest envelope: ...`
-parseManifest(jsonText); // throws on bad JSON / invalid envelope; returns `ManifestEnvelope`
+validateManifestEntries(unknown); // entry-list problems, per-index `[i] ...`
+validateManifest(unknown); // manifest problems, entries as `entries[i] ...`
+assertManifest(unknown); // throws `Invalid manifest: ...`
+parseManifest(jsonText); // throws on bad JSON / invalid manifest; returns `Manifest`
 isManifestEntryType(type); // type guard
 ```
 
@@ -393,9 +391,9 @@ formatFileSize(1536); // '1.50KB'
 
 | Specifier | Exports |
 | --- | --- |
-| `assetcraft/manifest` | Types, `MANIFEST_VERSION`, `ManifestEnvelope`, `urlToString`, `importManifests` |
+| `assetcraft/manifest` | Types, `MANIFEST_VERSION`, `Manifest`, `urlToString`, `importManifests` |
 | `assetcraft/manifest/build` | `ManifestBuilder`, `urlSafeSHA256`, `computeIntegrity`, `createPathFormatter`, `CreatePathFormatterOptions`, `PathFormatter`, `IntegrityAlgorithm`, `ManifestEntryFor` |
-| `assetcraft/manifest/validate` | `validateManifestEntry`, `assertManifestEntry`, `validateManifest`, `validateManifestEnvelope`, `assertManifestEnvelope`, `validateManifestReferences`, `assertManifestReferences`, `ValidateReferencesOptions`, `parseManifest`, `isManifestEntryType` |
+| `assetcraft/manifest/validate` | `validateManifestEntry`, `assertManifestEntry`, `validateManifestEntries`, `validateManifest`, `assertManifest`, `validateManifestReferences`, `assertManifestReferences`, `ValidateReferencesOptions`, `parseManifest`, `isManifestEntryType` |
 | `assetcraft/manifest/diff` | `diffManifests`, `ManifestDiff`, `ManifestChangedEntry` |
 | `assetcraft/manifest/prune` | `pruneDir`, `collectManifestPaths`, `PruneOptions` |
 | `assetcraft/compress` | `compressAsset`, `compressAssetSync`, `isCompressible`, `CompressAssetOptions/Result`, `CompressFormat` |

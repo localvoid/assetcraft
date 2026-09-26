@@ -3,12 +3,7 @@
  * (JSON files, external manifests, previous-build artifacts).
  */
 
-import type {
-  Manifest,
-  ManifestEnvelope,
-  ManifestEntry,
-  ManifestEntryType,
-} from '../manifest.js';
+import type { Manifest, ManifestEntry, ManifestEntryType } from '../manifest.js';
 import { MANIFEST_VERSION, urlToString } from '../manifest.js';
 
 /** All known manifest entry type discriminants. */
@@ -344,17 +339,16 @@ export function assertManifestEntry(entry: unknown): asserts entry is ManifestEn
 }
 
 /**
- * Validate a manifest (an array of entries). Returns problems prefixed
- * with the offending entry index; an empty array means the manifest
- * is valid.
+ * Validate a manifest entry list. Returns problems prefixed with the
+ * offending entry index; an empty array means the list is valid.
  */
-export function validateManifest(manifest: unknown): string[] {
-  if (!Array.isArray(manifest)) {
-    return ['manifest must be an array'];
+export function validateManifestEntries(entries: unknown): string[] {
+  if (!Array.isArray(entries)) {
+    return ['entries must be an array'];
   }
   const errors: string[] = [];
-  for (let i = 0; i < manifest.length; i++) {
-    for (const problem of validateManifestEntry(manifest[i])) {
+  for (let i = 0; i < entries.length; i++) {
+    for (const problem of validateManifestEntry(entries[i])) {
       errors.push(`[${i}] ${problem}`);
     }
   }
@@ -391,22 +385,22 @@ export interface ValidateReferencesOptions {
  * ignored (they are reported by {@link validateManifestEntry} instead).
  *
  * Pass the full manifest set, including imported external manifests —
- * unlike {@link validateManifest}, references may legitimately target
- * entries from another manifest in the set.
+ * unlike {@link validateManifestEntries}, references may legitimately
+ * target entries from another manifest in the set.
  *
  * Problems are prefixed with the entry index (`[i]`, or `[m][i]` when
  * several manifests are given); an empty array means all references
  * resolve.
  */
 export function validateManifestReferences(
-  manifests: Manifest | Manifest[],
+  manifests: Manifest | readonly Manifest[],
   options?: ValidateReferencesOptions,
 ): string[] {
-  const list = asManifestList(manifests);
+  const list: readonly Manifest[] = Array.isArray(manifests) ? manifests : [manifests];
   const byPath = new Map<string, ManifestEntry>();
   const byURL = new Map<string, ManifestEntry>();
   for (const manifest of list) {
-    for (const entry of manifest) {
+    for (const entry of manifest.entries) {
       if (typeof entry !== 'object' || entry === null) {
         continue;
       }
@@ -448,7 +442,7 @@ export function validateManifestReferences(
     }
   };
   list.forEach((manifest, m) => {
-    manifest.forEach((entry, i) => {
+    manifest.entries.forEach((entry, i) => {
       if (typeof entry !== 'object' || entry === null) {
         return;
       }
@@ -497,24 +491,13 @@ export function validateManifestReferences(
  * @throws If validation fails, with all problems listed in the message.
  */
 export function assertManifestReferences(
-  manifests: Manifest | Manifest[],
+  manifests: Manifest | readonly Manifest[],
   options?: ValidateReferencesOptions,
 ): void {
   const errors = validateManifestReferences(manifests, options);
   if (errors.length > 0) {
     throw Error(`Invalid manifest references: ${errors.join('; ')}`);
   }
-}
-
-/**
- * Normalize a single manifest or a list of manifests to a list (same
- * array ambiguity as in `assetcraft/manifest/prune`).
- */
-function asManifestList(manifests: Manifest | Manifest[]): Manifest[] {
-  // Note: Array.isArray can't discriminate Manifest from Manifest[] (both
-  // are arrays), so inspect the first element instead.
-  const head: unknown = (manifests as Manifest)[0];
-  return Array.isArray(head) ? (manifests as Manifest[]) : [manifests as Manifest];
 }
 
 /**
@@ -526,15 +509,15 @@ function isExternalURL(ref: string): boolean {
 }
 
 /**
- * Validate a manifest file envelope. Returns a list of human-readable
- * problems; an empty array means the envelope is valid. Entry problems
- * are prefixed with `entries[i]` to point into the document.
+ * Validate a manifest. Returns a list of human-readable problems; an
+ * empty array means the manifest is valid. Entry problems are prefixed
+ * with `entries[i]` to point into the document.
  */
-export function validateManifestEnvelope(envelope: unknown): string[] {
-  if (typeof envelope !== 'object' || envelope === null || Array.isArray(envelope)) {
-    return ['envelope must be an object with version and entries'];
+export function validateManifest(manifest: unknown): string[] {
+  if (typeof manifest !== 'object' || manifest === null || Array.isArray(manifest)) {
+    return ['manifest must be an object with version and entries'];
   }
-  const e = envelope as Record<string, unknown>;
+  const e = manifest as Record<string, unknown>;
   const errors: string[] = [];
   if (e['version'] !== MANIFEST_VERSION) {
     errors.push(`version must be ${MANIFEST_VERSION}`);
@@ -552,34 +535,32 @@ export function validateManifestEnvelope(envelope: unknown): string[] {
 }
 
 /**
- * Assert that `envelope` is a valid manifest file envelope.
+ * Assert that `manifest` is a valid manifest.
  * @throws If validation fails, with all problems listed in the message.
  */
-export function assertManifestEnvelope(
-  envelope: unknown,
-): asserts envelope is ManifestEnvelope {
-  const errors = validateManifestEnvelope(envelope);
+export function assertManifest(manifest: unknown): asserts manifest is Manifest {
+  const errors = validateManifest(manifest);
   if (errors.length > 0) {
-    throw Error(`Invalid manifest envelope: ${errors.join('; ')}`);
+    throw Error(`Invalid manifest: ${errors.join('; ')}`);
   }
 }
 
 /**
  * Parse a manifest file from a JSON string.
- * @throws On invalid JSON or an invalid envelope.
+ * @throws On invalid JSON or an invalid manifest.
  */
-export function parseManifest(data: string): ManifestEnvelope {
+export function parseManifest(data: string): Manifest {
   let parsed: unknown;
   try {
     parsed = JSON.parse(data);
   } catch (error) {
     throw Error(`Invalid manifest JSON: ${(error as Error).message}`);
   }
-  const errors = validateManifestEnvelope(parsed);
+  const errors = validateManifest(parsed);
   if (errors.length > 0) {
     throw Error(`Invalid manifest: ${errors.join('; ')}`);
   }
-  return parsed as ManifestEnvelope;
+  return parsed as Manifest;
 }
 
 /** Check whether `type` is a known manifest entry type discriminant. */

@@ -1,8 +1,42 @@
 # Breaking changes
 
+## Multi-entry APIs take `Manifest` (no bare entry lists)
+
+`ManifestBuilder` (constructor / `import`), `diffManifests`, `pruneDir` / `collectManifestPaths`, and `validateManifestReferences` / `assertManifestReferences` now take `Manifest` (`Manifest | Manifest[]` for multi-input) instead of bare `readonly ManifestEntry[]` lists. Use `manifest.entries` for the raw entry list, `validateManifestEntries` to validate one, and `builder.toManifest()` to stamp the version when writing:
+
+```ts
+// Before
+const builder = new ManifestBuilder(prev.entries);
+builder.import(externalEntries);
+await pruneDir(outDir, entries, { ignore: ['manifest.js.json'] });
+await updateFile('dist/manifest.js.json', JSON.stringify({ version: 1, entries: builder.entries }));
+
+// After
+const builder = new ManifestBuilder(prev);
+builder.import(externalManifest);
+await pruneDir(outDir, manifest, { ignore: ['manifest.js.json'] });
+await updateFile('dist/manifest.js.json', JSON.stringify(builder.toManifest()));
+```
+
+`diffManifests(prev, next)` takes two manifests; `validateManifestReferences([appManifest, vendorManifest])` takes manifests too. Deploy snapshots are versioned (`ManifestSnapshot extends Manifest`: `{ source, dir, version, entries }`); old deploy-state files without snapshot `version` still read (assumed version 1), while snapshots with an unsupported `version` throw — re-run deploys to rewrite state.
+
+## `ManifestEnvelope` is now `Manifest`
+
+The versioned wrapper (`{ version, entries }`) is now called `Manifest`. There is no special type for an entry list — use `manifest.entries` (and `validateManifestEntries` to validate one). Multi-entry pipeline APIs take `Manifest` directly (see above).
+
+- `ManifestEnvelope` → `Manifest`; `Manifest` (entry-list alias) is removed.
+- `validateManifestEnvelope` → `validateManifest` (`manifest must be an object with version and entries`; throws `Invalid manifest: ...`); `assertManifestEnvelope` → `assertManifest`.
+- `validateManifest` (entry list) → `validateManifestEntries` (`entries must be an array`, per-index `[i] ...`). `parseManifest` / `importManifests` now return `Manifest`.
+
+```ts
+const prev = parseManifest(await readFile('dist/manifest.js.json', 'utf8'));
+const builder = new ManifestBuilder(prev);
+builder.import(externalManifest);
+```
+
 ## Manifest files are versioned envelopes
 
-Manifest files on disk are now versioned envelopes (`ManifestEnvelope { version, entries }`, current `MANIFEST_VERSION = 1`) instead of bare entry arrays. In-memory pipelines are unchanged: `Manifest` is still the entry list, and `ManifestBuilder`, `diffManifests`, `pruneDir`, and the deploy snapshots keep working on it (`envelope.entries`).
+Manifest files on disk are now versioned (`Manifest { version, entries }`, current `MANIFEST_VERSION = 1`) instead of bare entry arrays. Pipeline APIs take `Manifest` (see above); old bare-array manifest files must be re-emitted (or wrapped) — they no longer parse.
 
 Before (`dist/manifest.js.json`):
 
@@ -16,25 +50,22 @@ After:
 { "version": 1, "entries": [{ "type": "js", "mime": "application/javascript" }] }
 ```
 
-### 1. Wrap entries when writing manifests
+### 1. Write manifests with `toManifest()`
 
 ```ts
-await updateFile(
-  'dist/manifest.js.json',
-  JSON.stringify({ version: 1, entries: builder.entries }, null, 2),
-);
+await updateFile('dist/manifest.js.json', JSON.stringify(builder.toManifest(), null, 2));
 ```
 
-### 2. Unwrap after reading manifests
+### 2. Pass manifests directly after reading
 
-`parseManifest` now returns a `ManifestEnvelope` (throws on bad JSON or an invalid envelope — see `validateManifestEnvelope` / `assertManifestEnvelope`); `importManifests` returns envelopes the same way:
+`parseManifest` now returns a `Manifest` (throws on bad JSON or an invalid manifest — see `validateManifest` / `assertManifest`); `importManifests` returns manifests the same way:
 
 ```ts
 const prev = parseManifest(await readFile('dist/manifest.js.json', 'utf8'));
-const builder = new ManifestBuilder(prev.entries);
+const builder = new ManifestBuilder(prev);
 ```
 
-`prepareDeploy` reads envelopes and is unchanged otherwise. Deploy-state files are a separate format and keep storing bare entry arrays in snapshots. Old bare-array manifest files must be re-emitted (or wrapped) — they no longer parse.
+`prepareDeploy` reads manifests and is unchanged otherwise.
 
 ## Compression moved out of entry creation
 
@@ -152,4 +183,4 @@ const selected = entry.compressible ?? shouldCompress?.(entry) ?? isCompressible
 // e.g. shouldCompress = (entry) => (entry.path.endsWith('.dat') ? false : isCompressible(entry))
 ```
 
-`validateManifestEntry` now enforces `compressible: boolean` when present. `prepareDeploy`, `pruneDir`, and HTTP helpers are unchanged — they keep reading the `compressed` records produced by the deploy script.
+`validateManifestEntry` now enforces `compressible: boolean` when present. `prepareDeploy` and HTTP helpers are unchanged — they keep reading the `compressed` records produced by the deploy script.

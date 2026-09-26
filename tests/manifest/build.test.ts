@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { ManifestEntry, ManifestJSEntry } from '../../src/manifest.js';
+import type { Manifest, ManifestEntry, ManifestJSEntry } from '../../src/manifest.js';
+import { MANIFEST_VERSION } from '../../src/manifest.js';
 import {
   computeIntegrity,
   createPathFormatter,
@@ -30,6 +31,10 @@ function mkEntry(overrides: MkOverrides): ManifestJSEntry {
     size: 100,
     ...overrides,
   };
+}
+
+function manifestOf(...entries: ManifestEntry[]): Manifest {
+  return { version: MANIFEST_VERSION, entries };
 }
 
 describe('ManifestBuilder add', () => {
@@ -115,7 +120,7 @@ describe('ManifestBuilder import', () => {
   test('indexes externals without adding to entries', () => {
     const b = new ManifestBuilder();
     const ext = mkEntry({ path: 'ext.js', sha256: 'eee', name: 'ext' });
-    b.import([ext]);
+    b.import(manifestOf(ext));
     expect(b.entries).toEqual([]);
     expect(b.getByPath('ext.js')).toBe(ext);
     expect(b.getByName('ext')).toBe(ext);
@@ -125,7 +130,7 @@ describe('ManifestBuilder import', () => {
   test('local entries take precedence over externals', () => {
     const b = new ManifestBuilder();
     const ext = mkEntry({ path: 'shared.js', sha256: 'eee', name: 'shared' });
-    b.import([ext]);
+    b.import(manifestOf(ext));
     const local = mkEntry({ path: 'local.js', sha256: 'lll', name: 'shared' });
     b.add(local);
     expect(b.getByName('shared')).toBe(local);
@@ -136,7 +141,7 @@ describe('ManifestBuilder import', () => {
   test('local url shadows external url with same key', () => {
     const b = new ManifestBuilder();
     const ext = mkEntry({ path: 'ext.js', sha256: 'eee', url: '/x.js' });
-    b.import([ext]);
+    b.import(manifestOf(ext));
     const local = mkEntry({ path: 'local.js', sha256: 'lll', url: '/y.js' });
     b.add(local);
     expect(b.getByURL('/x.js')).toBe(ext);
@@ -145,24 +150,24 @@ describe('ManifestBuilder import', () => {
 
   test('throws on duplicate external path', () => {
     const b = new ManifestBuilder();
-    b.import([mkEntry({ path: 'a.js', sha256: 'aaa' })]);
-    expect(() => b.import([mkEntry({ path: 'a.js', sha256: 'bbb' })])).toThrow(
+    b.import(manifestOf(mkEntry({ path: 'a.js', sha256: 'aaa' })));
+    expect(() => b.import(manifestOf(mkEntry({ path: 'a.js', sha256: 'bbb' })))).toThrow(
       "path 'a.js' already exists",
     );
   });
 
   test('throws on duplicate external name', () => {
     const b = new ManifestBuilder();
-    b.import([mkEntry({ path: 'a.js', sha256: 'aaa', name: 'dup' })]);
-    expect(() => b.import([mkEntry({ path: 'b.js', sha256: 'bbb', name: 'dup' })])).toThrow(
+    b.import(manifestOf(mkEntry({ path: 'a.js', sha256: 'aaa', name: 'dup' })));
+    expect(() => b.import(manifestOf(mkEntry({ path: 'b.js', sha256: 'bbb', name: 'dup' })))).toThrow(
       "name 'dup' already exists",
     );
   });
 
   test('throws on external url conflict with different hash', () => {
     const b = new ManifestBuilder();
-    b.import([mkEntry({ path: 'a.js', sha256: 'aaa', url: '/same.js' })]);
-    expect(() => b.import([mkEntry({ path: 'b.js', sha256: 'bbb', url: '/same.js' })])).toThrow(
+    b.import(manifestOf(mkEntry({ path: 'a.js', sha256: 'aaa', url: '/same.js' })));
+    expect(() => b.import(manifestOf(mkEntry({ path: 'b.js', sha256: 'bbb', url: '/same.js' })))).toThrow(
       "url '/same.js' already exists",
     );
   });
@@ -239,7 +244,7 @@ describe('ManifestBuilder updateByPath', () => {
 
   test('re-adds prev entry without transform', () => {
     const prev = mkEntry({ path: 'a.js', sha256: 'aaa' });
-    const b = new ManifestBuilder([prev]);
+    const b = new ManifestBuilder(manifestOf(prev));
     expect(b.updateByPath('a.js')).toBe(0);
     expect(b.entries).toEqual([prev]);
     expect(b.getByPath('a.js')).toBe(prev);
@@ -247,7 +252,7 @@ describe('ManifestBuilder updateByPath', () => {
 
   test('applies transform before adding', () => {
     const prev = mkEntry({ path: 'a.js', sha256: 'aaa' });
-    const b = new ManifestBuilder([prev]);
+    const b = new ManifestBuilder(manifestOf(prev));
     const idx = b.updateByPath('a.js', (e) => ({ ...e, sha256: 'zzz' }));
     expect(idx).toBe(0);
     expect(b.entries[0]?.sha256).toBe('zzz');
@@ -262,7 +267,7 @@ describe('ManifestBuilder queries', () => {
     const visible = mkEntry({ path: 'ext.js', sha256: 'eee', tags: ['app'] });
     const untagged = mkEntry({ path: 'other.js', sha256: 'ooo', tags: ['x'] });
     b.add(local);
-    b.import([shadowed, visible, untagged]);
+    b.import(manifestOf(shadowed, visible, untagged));
     expect(b.getByTag('app')).toEqual([local, visible]);
   });
 
@@ -279,7 +284,7 @@ describe('ManifestBuilder queries', () => {
     const extJs = mkEntry({ path: 'ext.js', sha256: 'eee' });
     b.add(js);
     b.add(css);
-    b.import([extJs]);
+    b.import(manifestOf(extJs));
     expect(b.listByType('js')).toEqual([js, extJs]);
     expect(b.listByType('css')).toEqual([css]);
   });
@@ -289,8 +294,28 @@ describe('ManifestBuilder queries', () => {
     const local = mkEntry({ path: 'a.js', sha256: 'aaa' });
     const ext = mkEntry({ path: 'a.js', sha256: 'aaa' });
     b.add(local);
-    b.import([ext]);
+    b.import(manifestOf(ext));
     expect(b.listByType('js')).toEqual([local]);
+  });
+});
+
+describe('ManifestBuilder toManifest', () => {
+  test('returns a versioned snapshot of entries', () => {
+    const b = new ManifestBuilder();
+    const a = mkEntry({ path: 'a.js', sha256: 'aaa' });
+    b.add(a);
+    expect(b.toManifest()).toEqual({ version: MANIFEST_VERSION, entries: [a] });
+  });
+
+  test('round-trips through parseManifest', async () => {
+    const { parseManifest } = await import('../../src/manifest/validate.js');
+    const b = new ManifestBuilder();
+    b.add(mkEntry({ path: 'a.js', sha256: 'aaa' }));
+    const manifest = parseManifest(JSON.stringify(b.toManifest()));
+    expect(manifest.entries).toHaveLength(1);
+    const rebuilt = new ManifestBuilder(manifest);
+    expect(rebuilt.updateByPath('a.js')).toBe(0);
+    expect(rebuilt.entries).toHaveLength(1);
   });
 });
 

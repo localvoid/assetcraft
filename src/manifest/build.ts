@@ -2,7 +2,7 @@ import { createHash, hash } from 'node:crypto';
 import { extname } from 'node:path';
 
 import type { Manifest, ManifestEntry, ManifestEntryType } from '../manifest.js';
-import { urlToString } from '../manifest.js';
+import { MANIFEST_VERSION, urlToString } from '../manifest.js';
 
 /**
  * ManifestBuilder — accumulates manifest entries during a build and
@@ -10,7 +10,7 @@ import { urlToString } from '../manifest.js';
  */
 export class ManifestBuilder {
   #entries: ManifestEntry[] = [];
-  #external: Manifest[] = [];
+  #external: (readonly ManifestEntry[])[] = [];
   #indexByURL = new Map<string, ManifestEntry>();
   #indexByName = new Map<string, ManifestEntry>();
   #indexByPath = new Map<string, ManifestEntry>();
@@ -24,12 +24,17 @@ export class ManifestBuilder {
     return this.#entries;
   }
 
+  /** This build as a versioned manifest (snapshot copy of {@link entries}). */
+  toManifest(): Manifest {
+    return { version: MANIFEST_VERSION, entries: [...this.#entries] };
+  }
+
   /**
    * @param prev - Manifest from the previous build (for content-hash matching).
    */
   constructor(prev?: Manifest) {
     if (prev) {
-      for (const entry of prev) {
+      for (const entry of prev.entries) {
         this.#prev.set(entry.path, entry);
       }
     }
@@ -43,8 +48,8 @@ export class ManifestBuilder {
    * manifests.
    */
   import(manifest: Manifest) {
-    this.#external.push(manifest);
-    for (const entry of manifest) {
+    this.#external.push(manifest.entries);
+    for (const entry of manifest.entries) {
       this.#indexExternal(entry);
     }
   }

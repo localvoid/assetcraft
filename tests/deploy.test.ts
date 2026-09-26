@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import type { PrepareDeployOptions } from '../src/deploy.js';
-import type { Manifest, ManifestEntry } from '../src/manifest.js';
+import type { ManifestEntry } from '../src/manifest.js';
 import { prepareDeploy } from '../src/deploy.js';
 import { MANIFEST_VERSION, urlToString } from '../src/manifest.js';
 
@@ -28,7 +28,7 @@ function jsEntry(
   } as ManifestEntry;
 }
 
-function writeManifest(path: string, manifest: Manifest): void {
+function writeManifest(path: string, manifest: readonly ManifestEntry[]): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify({ version: MANIFEST_VERSION, entries: manifest }));
 }
@@ -36,7 +36,7 @@ function writeManifest(path: string, manifest: Manifest): void {
 /** Run a single-manifest deploy cycle with a temp-dir sidecar. */
 function prepareSingle(
   dir: string,
-  manifest: Manifest,
+  manifest: readonly ManifestEntry[],
   options?: Partial<PrepareDeployOptions> & { now?: number },
 ): Promise<Awaited<ReturnType<typeof prepareDeploy>>> {
   const manifestPath = join(dir, 'manifest.json');
@@ -359,7 +359,7 @@ test('prepareDeploy rejects invalid deploy state shapes', async () => {
   const valid = {
     history: [],
     pending: [],
-    prevManifests: [{ source: manifestPath, dir: dir.path, entries: [entry] }],
+    prevManifests: [{ source: manifestPath, dir: dir.path, version: MANIFEST_VERSION, entries: [entry] }],
     deployedAt: { [manifestPath]: { 'dist/a.js': 1000 } },
   };
   const cases: Array<[string, RegExp, (v: typeof valid) => unknown]> = [
@@ -378,6 +378,14 @@ test('prepareDeploy rejects invalid deploy state shapes', async () => {
     ],
     ['missing snapshots', /prevManifests must be an array/, (v) => ({ ...v, prevManifests: {} })],
     ['bad snapshot', /string source\/dir/, (v) => ({ ...v, prevManifests: [{}] })],
+    [
+      'unsupported snapshot version',
+      /unsupported version/,
+      (v) => ({
+        ...v,
+        prevManifests: [{ source: 'm.json', dir: '.', version: 2, entries: [entry] }],
+      }),
+    ],
     [
       'invalid snapshot entry',
       /prev manifest 'm\.json' is invalid/,
@@ -406,6 +414,29 @@ test('prepareDeploy rejects invalid deploy state shapes', async () => {
   }
 });
 
+test('prepareDeploy accepts legacy snapshots without version', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
+  const manifestPath = join(dir.path, 'manifest.json');
+  const path = join(dir.path, 'manifest.deploy.json');
+  const entry = jsEntry('/s/a.js', 'dist/a.js', 'hash1');
+  writeManifest(manifestPath, [entry]);
+  // States written before snapshots carried `version` omit it; they read as version 1.
+  writeFileSync(
+    path,
+    JSON.stringify({
+      history: [],
+      pending: [],
+      prevManifests: [{ source: manifestPath, dir: dir.path, entries: [entry] }],
+      deployedAt: { [manifestPath]: { 'dist/a.js': 1000 } },
+      seed: null,
+    }),
+  );
+  const result = await prepareDeploy({ manifests: [manifestPath], path, now: 2000 });
+  equal(result.plan.add.length, 0);
+  equal(result.plan.unchanged, 1);
+  equal(result.snapshots[0]?.version, MANIFEST_VERSION);
+});
+
 test('result snapshots match persisted state', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'naxe-deploy-'));
   const htmlPath = join(dir.path, 'html', 'manifest.json');
@@ -415,7 +446,12 @@ test('result snapshots match persisted state', async () => {
   writeManifest(jsPath, [jsEntry('/s/a.js', 'a.js', 'hash1')]);
   const result = await prepareDeploy({ manifests: [htmlPath, jsPath], path, now: 1000 });
   const state = JSON.parse(readFileSync(path, 'utf8')) as {
-    prevManifests: Array<{ source: string; dir: string; entries: Manifest }>;
+    prevManifests: Array<{
+      source: string;
+      dir: string;
+      version: number;
+      entries: ManifestEntry[];
+    }>;
     deployedAt: Record<string, Record<string, number>>;
   };
   deepEqual(
@@ -428,6 +464,8 @@ test('result snapshots match persisted state', async () => {
   );
   equal(state.prevManifests[0]?.entries.length, 1);
   equal(state.prevManifests[1]?.entries.length, 1);
+  equal(state.prevManifests[0]?.version, MANIFEST_VERSION);
+  equal(state.prevManifests[1]?.version, MANIFEST_VERSION);
   deepEqual(result.snapshots, state.prevManifests);
   deepEqual(state.deployedAt, { [htmlPath]: { 'index.html': 1000 }, [jsPath]: { 'a.js': 1000 } });
   equal(result.deployedAt, 1000);
@@ -480,7 +518,7 @@ test('plan holds removals for maxMissedDeploys then deletes', async () => {
   writeManifest(manifestPath, [oldEntry, jsEntry('/s/a.js', 'dist/a.js', 'hash1')]);
   await prepareDeploy({ manifests: [manifestPath], path, now: 1000 });
 
-  const next: Manifest = [jsEntry('/s/a.js', 'dist/a.js', 'hash1')];
+  const next: ManifestEntry[] = [jsEntry('/s/a.js', 'dist/a.js', 'hash1')];
   writeManifest(manifestPath, next);
   const first = await prepareDeploy({ manifests: [manifestPath], path, now: 2000 });
   equal(first.plan.remove.length, 0);

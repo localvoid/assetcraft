@@ -3,7 +3,7 @@ import { mkdtempDisposable, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { Manifest } from '../../src/manifest.js';
+import type { ManifestEntry } from '../../src/manifest.js';
 import { MANIFEST_VERSION, importManifests } from '../../src/manifest.js';
 
 describe('importManifests', () => {
@@ -14,7 +14,7 @@ describe('importManifests', () => {
   test('imports manifests in order with their paths', async () => {
     await using tmp = await mkdtempDisposable(join(tmpdir(), 'assetcraft-test-'));
     const dir = tmp.path;
-    const first: Manifest = [
+    const first: ManifestEntry[] = [
       {
         type: 'js',
         mime: 'application/javascript',
@@ -25,7 +25,7 @@ describe('importManifests', () => {
         size: 10,
       },
     ];
-    const second: Manifest = [
+    const second: ManifestEntry[] = [
       {
         type: 'css',
         mime: 'text/css',

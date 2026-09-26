@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { ManifestJSEntry } from '../../src/manifest.js';
+import type { Manifest, ManifestEntry, ManifestJSEntry } from '../../src/manifest.js';
+import { MANIFEST_VERSION } from '../../src/manifest.js';
 import { diffManifests } from '../../src/manifest/diff.js';
 
 let seq = 0;
@@ -28,15 +29,19 @@ function mkEntry(overrides: MkOverrides): ManifestJSEntry {
   };
 }
 
+function manifestOf(...entries: ManifestEntry[]): Manifest {
+  return { version: MANIFEST_VERSION, entries };
+}
+
 describe('diffManifests', () => {
   test('empty manifests produce empty diff', () => {
-    expect(diffManifests([], [])).toEqual({ added: [], removed: [], changed: [], unchanged: [] });
+    expect(diffManifests(manifestOf(), manifestOf())).toEqual({ added: [], removed: [], changed: [], unchanged: [] });
   });
 
   test('reports added entries in next order', () => {
     const a = mkEntry({ path: 'a.js', sha256: 'aaa' });
     const b = mkEntry({ path: 'b.js', sha256: 'bbb' });
-    const diff = diffManifests([], [a, b]);
+    const diff = diffManifests(manifestOf(), manifestOf(a, b));
     expect(diff.added).toEqual([a, b]);
     expect(diff.removed).toEqual([]);
     expect(diff.changed).toEqual([]);
@@ -46,7 +51,7 @@ describe('diffManifests', () => {
   test('reports removed entries in prev order', () => {
     const a = mkEntry({ path: 'a.js', sha256: 'aaa' });
     const b = mkEntry({ path: 'b.js', sha256: 'bbb' });
-    const diff = diffManifests([a, b], []);
+    const diff = diffManifests(manifestOf(a, b), manifestOf());
     expect(diff.removed).toEqual([a, b]);
     expect(diff.added).toEqual([]);
   });
@@ -54,21 +59,21 @@ describe('diffManifests', () => {
   test('identical entries are unchanged', () => {
     const a = mkEntry({ path: 'a.js', sha256: 'aaa' });
     const b = mkEntry({ path: 'a.js', sha256: 'aaa' });
-    const diff = diffManifests([a], [b]);
+    const diff = diffManifests(manifestOf(a), manifestOf(b));
     expect(diff.unchanged).toEqual([b]);
     expect(diff.changed).toEqual([]);
   });
 
   test('same reference is unchanged', () => {
     const a = mkEntry({ path: 'a.js', sha256: 'aaa' });
-    const diff = diffManifests([a], [a]);
+    const diff = diffManifests(manifestOf(a), manifestOf(a));
     expect(diff.unchanged).toEqual([a]);
   });
 
   test('hash change is reported with hashChanged true', () => {
     const prev = mkEntry({ path: 'a.js', sha256: 'aaa' });
     const next = mkEntry({ path: 'a.js', sha256: 'bbb' });
-    const diff = diffManifests([prev], [next]);
+    const diff = diffManifests(manifestOf(prev), manifestOf(next));
     expect(diff.changed).toEqual([{ prev, next, hashChanged: true }]);
     expect(diff.unchanged).toEqual([]);
   });
@@ -76,7 +81,7 @@ describe('diffManifests', () => {
   test('metadata-only change is reported with hashChanged false', () => {
     const prev = mkEntry({ path: 'a.js', sha256: 'aaa', mime: 'application/javascript' });
     const next = mkEntry({ path: 'a.js', sha256: 'aaa', mime: 'text/javascript' });
-    const diff = diffManifests([prev], [next]);
+    const diff = diffManifests(manifestOf(prev), manifestOf(next));
     expect(diff.changed).toHaveLength(1);
     expect(diff.changed[0]?.hashChanged).toBe(false);
     expect(diff.changed[0]?.prev).toBe(prev);
@@ -90,7 +95,7 @@ describe('diffManifests', () => {
       sha256: 'aaa',
       url: { origin: 'https://cdn.example', path: '/a.js' },
     });
-    const diff = diffManifests([prev], [next]);
+    const diff = diffManifests(manifestOf(prev), manifestOf(next));
     expect(diff.changed).toHaveLength(1);
     expect(diff.unchanged).toEqual([]);
   });
@@ -102,7 +107,7 @@ describe('diffManifests', () => {
     const gone2 = mkEntry({ path: 'gone2.js', sha256: 'g2' });
     const nextChanged = mkEntry({ path: 'changed.js', sha256: 'new' });
     const added = mkEntry({ path: 'added.js', sha256: 'a' });
-    const diff = diffManifests([keep, oldChanged, gone1, gone2], [nextChanged, keep, added]);
+    const diff = diffManifests(manifestOf(keep, oldChanged, gone1, gone2), manifestOf(nextChanged, keep, added));
     expect(diff.added).toEqual([added]);
     expect(diff.removed).toEqual([gone1, gone2]);
     expect(diff.unchanged).toEqual([keep]);

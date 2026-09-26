@@ -26,9 +26,9 @@ import { dirname, join } from 'node:path';
 import type { CompressFormat } from './compress.js';
 import type { Manifest, ManifestEntry } from './manifest.js';
 import { updateFile } from './file.js';
-import { urlToString } from './manifest.js';
+import { MANIFEST_VERSION, urlToString } from './manifest.js';
 import { diffManifests } from './manifest/diff.js';
-import { parseManifest, validateManifest } from './manifest/validate.js';
+import { parseManifest, validateManifestEntries } from './manifest/validate.js';
 
 /** Immutable-asset URL-to-hash mapping with optional tombstone timestamp. */
 export interface DeployHistoryEntry {
@@ -151,11 +151,13 @@ export interface PrepareDeployResult {
 /** Default history retention for inactive URLs: 365 days, in seconds. */
 const DEFAULT_PURGE_DURATION = 31536000;
 
-/** A manifest snapshot: source path with its resolve directory and entries. */
-export interface ManifestSnapshot {
+/**
+ * A manifest snapshot: a manifest plus its source path and resolve
+ * directory. Persisted in the deploy state for the next cycle's diff.
+ */
+export interface ManifestSnapshot extends Manifest {
   readonly source: string;
   readonly dir: string;
-  readonly entries: Manifest;
 }
 
 /** Per-file deploy timestamps: source -> path -> unix seconds. */
@@ -200,7 +202,7 @@ export async function prepareDeploy(options: PrepareDeployOptions): Promise<Prep
 
   const loaded: ManifestSnapshot[] = [];
   for (const source of options.manifests) {
-    loaded.push({ source, dir: dirname(source), entries: await loadManifestFile(source) });
+    loaded.push({ source, dir: dirname(source), ...(await loadManifestFile(source)) });
   }
   const state = await loadDeployState(options.path);
   const prevRecords = state?.prevManifests ?? [];
@@ -209,11 +211,7 @@ export async function prepareDeploy(options: PrepareDeployOptions): Promise<Prep
   const history = state?.history ?? [];
   const seed = options.seed !== undefined ? options.seed : (state?.seed ?? null);
 
-  checkHistory(
-    loaded.flatMap((l) => l.entries),
-    history,
-  );
-  const manifest = loaded.flatMap((l) => l.entries);
+  checkHistory(loaded, history);
 
   const plan = planAll(
     loaded,
@@ -224,7 +222,7 @@ export async function prepareDeploy(options: PrepareDeployOptions): Promise<Prep
     prevDeployedAt,
     now,
   );
-  const nextHistory = recordHistory(manifest, history, purgeDuration, now);
+  const nextHistory = recordHistory(loaded, history, purgeDuration, now);
   const snapshots = snapshotRecords(loaded, prevRecords, plan.pendingRemove);
   const deployedAt = nextDeployedAt(snapshots, prevRecords, prevDeployedAt, now);
   const { current, retained, skippedExternal } = partitionEmbed(
@@ -336,7 +334,7 @@ function planSource(
   }
   const current = loaded?.entries ?? [];
   const dir = loaded?.dir ?? record.dir;
-  const diff = diffManifests(record.entries, current);
+  const diff = diffManifests(record, loaded ?? { version: MANIFEST_VERSION, entries: [] });
   const upload = new Set([
     ...diff.added.map((entry) => entry.path),
     ...diff.changed.filter((c) => c.hashChanged).map((c) => c.next.path),
@@ -398,7 +396,12 @@ function snapshotRecords(
       prev === undefined || wanted === undefined
         ? []
         : prev.entries.filter((entry) => !currentPaths.has(entry.path) && wanted.has(entry.path));
-    return { source: l.source, dir: l.dir, entries: [...l.entries, ...retained] };
+    return {
+      source: l.source,
+      dir: l.dir,
+      version: MANIFEST_VERSION,
+      entries: [...l.entries, ...retained],
+    };
   });
   for (const record of prevRecords) {
     if (!loadedSources.has(record.source)) {
@@ -408,7 +411,7 @@ function snapshotRecords(
       }
       const entries = record.entries.filter((entry) => wanted.has(entry.path));
       if (entries.length > 0) {
-        next.push({ source: record.source, dir: record.dir, entries });
+        next.push({ source: record.source, dir: record.dir, version: MANIFEST_VERSION, entries });
       }
     }
   }
@@ -607,7 +610,17 @@ function parsePrevManifests(value: unknown): ManifestSnapshot[] {
         'Invalid deploy state: prevManifests entries need string source/dir and an entries array',
       );
     }
-    const problems = validateManifest(item['entries']);
+    // Legacy states lack `version`; they were written as version 1.
+    if (item['version'] !== undefined && item['version'] !== MANIFEST_VERSION) {
+      const version =
+        typeof item['version'] === 'number' || typeof item['version'] === 'string'
+          ? item['version']
+          : JSON.stringify(item['version']);
+      throw new Error(
+        `Invalid deploy state: prev manifest '${item['source']}' has unsupported version '${version}'`,
+      );
+    }
+    const problems = validateManifestEntries(item['entries']);
     if (problems.length > 0) {
       throw new Error(
         `Invalid deploy state: prev manifest '${item['source']}' is invalid: ${problems.join('; ')}`,
@@ -616,7 +629,8 @@ function parsePrevManifests(value: unknown): ManifestSnapshot[] {
     return {
       source: item['source'] as string,
       dir: item['dir'] as string,
-      entries: item['entries'] as Manifest,
+      version: MANIFEST_VERSION,
+      entries: item['entries'] as ManifestEntry[],
     };
   });
 }
@@ -663,7 +677,7 @@ async function loadDeployState(path: string): Promise<DeployState | undefined> {
 /** Read and parse a manifest file, wrapping errors with the file path. */
 async function loadManifestFile(path: string): Promise<Manifest> {
   try {
-    return parseManifest(await fs.readFile(path, 'utf8')).entries;
+    return parseManifest(await fs.readFile(path, 'utf8'));
   } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
       throw new Error(`Invalid manifest '${path}': file not found`);
@@ -680,47 +694,54 @@ async function loadManifestFile(path: string): Promise<Manifest> {
  * key is origin-scoped).
  * @throws On immutable URL reuse with different content (cache collision).
  */
-function checkHistory(manifest: Manifest, prevEntries?: DeployHistoryEntry[]): void {
+function checkHistory(
+  manifests: readonly Manifest[],
+  prevEntries?: DeployHistoryEntry[],
+): void {
   const hashes = new Map(prevEntries?.map((entry) => [entry.url, entry.sha256]));
-  for (const entry of manifest) {
-    if (entry.immutable !== true) {
-      continue;
-    }
-    const url = urlToString(entry.url);
-    const known = hashes.get(url);
-    if (known === undefined) {
-      hashes.set(url, entry.sha256);
-    } else if (known !== entry.sha256) {
-      throw Error(`Hash collision detected for an asset with an url '${url}': ${entry.sha256}`);
+  for (const manifest of manifests) {
+    for (const entry of manifest.entries) {
+      if (entry.immutable !== true) {
+        continue;
+      }
+      const url = urlToString(entry.url);
+      const known = hashes.get(url);
+      if (known === undefined) {
+        hashes.set(url, entry.sha256);
+      } else if (known !== entry.sha256) {
+        throw Error(`Hash collision detected for an asset with an url '${url}': ${entry.sha256}`);
+      }
     }
   }
 }
 
 /**
- * Record a manifest's immutable entries into history and purge inactive
+ * Record manifests' immutable entries into history and purge inactive
  * URLs past the retention window. Returns the entries to persist in the
  * deploy state file for the next deploy cycle.
  */
 function recordHistory(
-  manifest: Manifest,
+  manifests: readonly Manifest[],
   prevEntries: DeployHistoryEntry[],
   purgeDuration: number,
   now: number,
 ): DeployHistoryEntry[] {
   const index = new Map(prevEntries.map((entry) => [entry.url, { ...entry }]));
   const active = new Set<string>();
-  for (const entry of manifest) {
-    if (entry.immutable !== true) {
-      continue;
+  for (const manifest of manifests) {
+    for (const entry of manifest.entries) {
+      if (entry.immutable !== true) {
+        continue;
+      }
+      const url = urlToString(entry.url);
+      const known = index.get(url);
+      if (known === undefined) {
+        index.set(url, { url, sha256: entry.sha256 });
+      } else if (known.sha256 !== entry.sha256) {
+        throw Error(`Hash collision detected for an asset with an url '${url}': ${entry.sha256}`);
+      }
+      active.add(url);
     }
-    const url = urlToString(entry.url);
-    const known = index.get(url);
-    if (known === undefined) {
-      index.set(url, { url, sha256: entry.sha256 });
-    } else if (known.sha256 !== entry.sha256) {
-      throw Error(`Hash collision detected for an asset with an url '${url}': ${entry.sha256}`);
-    }
-    active.add(url);
   }
   purgeInactive(index, active, purgeDuration, now);
   return [...index.values()];

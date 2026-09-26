@@ -1,16 +1,16 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { Manifest } from '../../src/manifest.js';
+import type { Manifest, ManifestEntry } from '../../src/manifest.js';
 import { MANIFEST_VERSION } from '../../src/manifest.js';
 import {
+  assertManifest,
   assertManifestEntry,
-  assertManifestEnvelope,
   assertManifestReferences,
   isManifestEntryType,
   parseManifest,
   validateManifest,
+  validateManifestEntries,
   validateManifestEntry,
-  validateManifestEnvelope,
   validateManifestReferences,
 } from '../../src/manifest/validate.js';
 
@@ -300,19 +300,19 @@ describe('assertManifestEntry', () => {
   });
 });
 
-describe('validateManifest', () => {
+describe('validateManifestEntries', () => {
   test('accepts an empty array and arrays of valid entries', () => {
-    expect(validateManifest([])).toEqual([]);
-    expect(validateManifest([validEntry(), validEntry({ path: 'b.js' })])).toEqual([]);
+    expect(validateManifestEntries([])).toEqual([]);
+    expect(validateManifestEntries([validEntry(), validEntry({ path: 'b.js' })])).toEqual([]);
   });
 
   test('rejects non-arrays', () => {
-    expect(validateManifest({})).toEqual(['manifest must be an array']);
-    expect(validateManifest('[]')).toEqual(['manifest must be an array']);
+    expect(validateManifestEntries({})).toEqual(['entries must be an array']);
+    expect(validateManifestEntries('[]')).toEqual(['entries must be an array']);
   });
 
   test('prefixes problems with entry index', () => {
-    const errors = validateManifest([validEntry(), validEntry({ path: '' })]);
+    const errors = validateManifestEntries([validEntry(), validEntry({ path: '' })]);
     expect(errors).toHaveLength(1);
     expect(errors.join('\n')).toContain('[1]');
     expect(errors.join('\n')).toContain('path must be a non-empty string');
@@ -333,7 +333,10 @@ describe('validateManifestReferences', () => {
   }
 
   function manifestOf(...entries: Record<string, unknown>[]): Manifest {
-    return entries as unknown as Manifest;
+    return {
+      version: MANIFEST_VERSION,
+      entries: entries as unknown as ManifestEntry[],
+    };
   }
 
   function linkedSet(): Manifest {
@@ -496,7 +499,12 @@ describe('validateManifestReferences', () => {
         manifestOf(refEntry({ symbols: 42, deps: 'x', poster: null, preload: [42], srcset: 'x' })),
       ),
     ).toEqual([]);
-    expect(validateManifestReferences([[null, 42]] as unknown as Manifest[])).toEqual([]);
+    expect(
+      validateManifestReferences({
+        version: MANIFEST_VERSION,
+        entries: [null, 42],
+      } as unknown as Manifest),
+    ).toEqual([]);
   });
 
   test('assertManifestReferences throws listing all problems', () => {
@@ -515,44 +523,42 @@ describe('validateManifestReferences', () => {
   });
 });
 
-describe('validateManifestEnvelope', () => {
-  function envelope(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+describe('validateManifest', () => {
+  function manifest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return { version: MANIFEST_VERSION, entries: [validEntry()], ...overrides };
   }
 
-  test('accepts a valid envelope', () => {
-    expect(validateManifestEnvelope(envelope())).toEqual([]);
+  test('accepts a valid manifest', () => {
+    expect(validateManifest(manifest())).toEqual([]);
   });
 
   test('rejects non-objects', () => {
     for (const bad of [null, undefined, 42, 'manifest', []]) {
-      expect(validateManifestEnvelope(bad)).toEqual([
-        'envelope must be an object with version and entries',
+      expect(validateManifest(bad)).toEqual([
+        'manifest must be an object with version and entries',
       ]);
     }
   });
 
   test('rejects missing or unsupported versions', () => {
     for (const version of [undefined, 0, 2, '1', null]) {
-      expect(validateManifestEnvelope(envelope({ version }))).toContain(
+      expect(validateManifest(manifest({ version }))).toContain(
         `version must be ${MANIFEST_VERSION}`,
       );
     }
   });
 
   test('rejects non-array entries', () => {
-    expect(validateManifestEnvelope(envelope({ entries: {} }))).toContain(
-      'entries must be an array',
-    );
+    expect(validateManifest(manifest({ entries: {} }))).toContain('entries must be an array');
   });
 
   test('prefixes entry problems with entries[i]', () => {
-    const errors = validateManifestEnvelope(envelope({ entries: [validEntry({ path: '' })] }));
+    const errors = validateManifest(manifest({ entries: [validEntry({ path: '' })] }));
     expect(errors).toEqual(['entries[0] path must be a non-empty string']);
   });
 
-  test('collects envelope and entry problems together', () => {
-    const errors = validateManifestEnvelope({ version: 2, entries: [validEntry({ path: '' })] });
+  test('collects manifest and entry problems together', () => {
+    const errors = validateManifest({ version: 2, entries: [validEntry({ path: '' })] });
     expect(errors).toEqual([
       `version must be ${MANIFEST_VERSION}`,
       'entries[0] path must be a non-empty string',
@@ -560,29 +566,29 @@ describe('validateManifestEnvelope', () => {
   });
 });
 
-describe('assertManifestEnvelope', () => {
-  test('passes for valid envelopes', () => {
+describe('assertManifest', () => {
+  test('passes for valid manifests', () => {
     expect(() =>
-      assertManifestEnvelope({ version: MANIFEST_VERSION, entries: [validEntry()] }),
+      assertManifest({ version: MANIFEST_VERSION, entries: [validEntry()] }),
     ).not.toThrow();
   });
 
   test('throws listing all problems', () => {
     let error: unknown;
     try {
-      assertManifestEnvelope({ version: 2, entries: 'nope' });
+      assertManifest({ version: 2, entries: 'nope' });
     } catch (e) {
       error = e;
     }
     expect(error).toBeDefined();
-    expect((error as Error).message).toContain('Invalid manifest envelope: ');
+    expect((error as Error).message).toContain('Invalid manifest: ');
     expect((error as Error).message).toContain(`version must be ${MANIFEST_VERSION}`);
     expect((error as Error).message).toContain('entries must be an array');
   });
 });
 
 describe('parseManifest', () => {
-  test('parses a valid JSON manifest envelope', () => {
+  test('parses a valid JSON manifest', () => {
     const entry = validEntry();
     const manifest = parseManifest(
       JSON.stringify({ version: MANIFEST_VERSION, entries: [entry] }),
@@ -594,9 +600,9 @@ describe('parseManifest', () => {
     expect(() => parseManifest('{nope')).toThrow('Invalid manifest JSON: ');
   });
 
-  test('throws on non-envelope payloads', () => {
+  test('throws on non-manifest payloads', () => {
     expect(() => parseManifest('{}')).toThrow('Invalid manifest: ');
-    expect(() => parseManifest('[]')).toThrow('envelope must be an object');
+    expect(() => parseManifest('[]')).toThrow('manifest must be an object');
   });
 
   test('throws on invalid entries with index', () => {

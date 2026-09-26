@@ -34,7 +34,7 @@ export interface PruneOptions {
  *   suffix contains a path separator.
  */
 export function collectManifestPaths(
-  manifests: Manifest | Manifest[],
+  manifests: Manifest | readonly Manifest[],
   dir: string,
   options?: Pick<PruneOptions, 'compressedSuffixes'>,
 ): Set<string> {
@@ -43,10 +43,10 @@ export function collectManifestPaths(
       assertValidCompressedSuffix(dir, suffix);
     }
   }
-  const list = asManifestList(manifests);
+  const list: readonly Manifest[] = Array.isArray(manifests) ? manifests : [manifests];
   const keep = new Set<string>();
   for (const manifest of list) {
-    for (const entry of manifest) {
+    for (const entry of manifest.entries) {
       const path = normalizeKeepPath(dir, entry.path);
       keep.add(path);
       // Explicit variant paths recorded in `entry.compressed`…
@@ -80,7 +80,7 @@ export function collectManifestPaths(
  */
 export async function pruneDir(
   dir: string,
-  manifests: Manifest | Manifest[],
+  manifests: Manifest | readonly Manifest[],
   options?: PruneOptions,
 ): Promise<void> {
   const keep = collectManifestPaths(manifests, dir, options);
@@ -90,14 +90,6 @@ export async function pruneDir(
     }
   }
   await cleanDirRecursive(dir, [...keep], { removeEmptyDirs: options?.removeEmptyDirs });
-}
-
-/** Normalize a single manifest or a list of manifests to a list. */
-function asManifestList(manifests: Manifest | Manifest[]): Manifest[] {
-  // Note: Array.isArray can't discriminate Manifest from Manifest[] (both
-  // are arrays), so inspect the first element instead.
-  const head: unknown = (manifests as Manifest)[0];
-  return Array.isArray(head) ? (manifests as Manifest[]) : [manifests as Manifest];
 }
 
 /** Reject paths that are absolute or resolve outside `dir`. */

@@ -4,8 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { Manifest, ManifestEntry } from '../../src/manifest.js';
+import { MANIFEST_VERSION } from '../../src/manifest.js';
 import { collectManifestPaths, pruneDir } from '../../src/manifest/prune.js';
 import { pathExists, writeFiles } from '../helpers.js';
+
+function manifestOf(...entries: ManifestEntry[]): Manifest {
+  return { version: MANIFEST_VERSION, entries };
+}
 
 function mkEntry(path: string): ManifestEntry {
   return {
@@ -37,21 +42,27 @@ describe('collectManifestPaths', () => {
   test('collects normalized paths', async () => {
     await using tmp = await mkdtempDisposable(join(tmpdir(), 'assetcraft-test-'));
     const dir = tmp.path;
-    const keep = collectManifestPaths([mkEntry('./a.js'), mkEntry('sub/../sub/b.js')], dir);
+    const keep = collectManifestPaths(
+      manifestOf(mkEntry('./a.js'), mkEntry('sub/../sub/b.js')),
+      dir,
+    );
     expect([...keep].sort()).toEqual(['a.js', 'sub/b.js']);
   });
 
   test('accepts a list of manifests', async () => {
     await using tmp = await mkdtempDisposable(join(tmpdir(), 'assetcraft-test-'));
     const dir = tmp.path;
-    const manifests: Manifest[] = [[mkEntry('one.js')], [mkEntry('two.js')]];
+    const manifests: Manifest[] = [
+      manifestOf(mkEntry('one.js')),
+      manifestOf(mkEntry('two.js')),
+    ];
     expect([...collectManifestPaths(manifests, dir)].sort()).toEqual(['one.js', 'two.js']);
   });
 
   test('includes compressed variants', async () => {
     await using tmp = await mkdtempDisposable(join(tmpdir(), 'assetcraft-test-'));
     const dir = tmp.path;
-    const keep = collectManifestPaths([mkEntry('app-hash.js')], dir, {
+    const keep = collectManifestPaths(manifestOf(mkEntry('app-hash.js')), dir, {
       compressedSuffixes: ['.br', '.gz'],
     });
     expect([...keep].sort()).toEqual(['app-hash.js', 'app-hash.js.br', 'app-hash.js.gz']);
@@ -61,7 +72,7 @@ describe('collectManifestPaths', () => {
     test(`throws for entry '${bad}'`, async () => {
       await using tmp = await mkdtempDisposable(join(tmpdir(), 'assetcraft-test-'));
       const dir = tmp.path;
-      expect(() => collectManifestPaths([mkEntry(bad)], dir)).toThrow();
+      expect(() => collectManifestPaths(manifestOf(mkEntry(bad)), dir)).toThrow();
     });
   }
 
@@ -70,7 +81,7 @@ describe('collectManifestPaths', () => {
       await using tmp = await mkdtempDisposable(join(tmpdir(), 'assetcraft-test-'));
       const dir = tmp.path;
       expect(() =>
-        collectManifestPaths([mkEntry('a.js')], dir, { compressedSuffixes: [suffix] }),
+        collectManifestPaths(manifestOf(mkEntry('a.js')), dir, { compressedSuffixes: [suffix] }),
       ).toThrow();
     });
   }
@@ -81,7 +92,7 @@ describe('pruneDir', () => {
     await using tmp = await mkdtempDisposable(join(tmpdir(), 'assetcraft-test-'));
     const dir = tmp.path;
     await writeFiles(dir, { 'keep.js': 'keep', 'stale.js': 'stale' });
-    await pruneDir(dir, [mkEntry('./keep.js')]);
+    await pruneDir(dir, manifestOf(mkEntry('./keep.js')));
     expect(await pathExists(join(dir, 'keep.js'))).toBe(true);
     expect(await pathExists(join(dir, 'stale.js'))).toBe(false);
   });
@@ -94,7 +105,7 @@ describe('pruneDir', () => {
       'static/inner/v.js': 'v',
       'stale.js': 's',
     });
-    await pruneDir(dir, [mkEntry('app.js')], { ignore: ['static/'] });
+    await pruneDir(dir, manifestOf(mkEntry('app.js')), { ignore: ['static/'] });
     expect(await pathExists(join(dir, 'static', 'inner', 'v.js'))).toBe(true);
     expect(await pathExists(join(dir, 'stale.js'))).toBe(false);
   });
@@ -104,7 +115,7 @@ describe('pruneDir', () => {
     const dir = tmp.path;
     await writeFiles(dir, { 'keep.js': 'keep' });
     await rejectsWith(
-      () => pruneDir(dir, [mkEntry('other.js')], { ignore: [join(dir, 'keep.js')] }),
+      () => pruneDir(dir, manifestOf(mkEntry('other.js')), { ignore: [join(dir, 'keep.js')] }),
       'outside',
     );
     expect(await pathExists(join(dir, 'keep.js'))).toBe(true);
@@ -114,7 +125,7 @@ describe('pruneDir', () => {
     await using tmp = await mkdtempDisposable(join(tmpdir(), 'assetcraft-test-'));
     const dir = tmp.path;
     await writeFiles(dir, { 'app.js': 'app' });
-    await rejectsWith(() => pruneDir(dir, [mkEntry('../evil.js')]));
+    await rejectsWith(() => pruneDir(dir, manifestOf(mkEntry('../evil.js'))));
     expect(await pathExists(join(dir, 'app.js'))).toBe(true);
   });
 
@@ -122,8 +133,8 @@ describe('pruneDir', () => {
     await using tmp = await mkdtempDisposable(join(tmpdir(), 'assetcraft-test-'));
     const dir = tmp.path;
     await writeFiles(dir, { 'app.js': 'app' });
-    await rejectsWith(() => pruneDir(dir, [mkEntry('.')]), 'itself');
-    await rejectsWith(() => pruneDir(dir, [mkEntry('./')]), 'itself');
+    await rejectsWith(() => pruneDir(dir, manifestOf(mkEntry('.'))), 'itself');
+    await rejectsWith(() => pruneDir(dir, manifestOf(mkEntry('./'))), 'itself');
     expect(await pathExists(join(dir, 'app.js'))).toBe(true);
   });
 
@@ -135,7 +146,7 @@ describe('pruneDir', () => {
       'app-hash.js.br': 'br',
       'old.js': 'old',
     });
-    await pruneDir(dir, [mkEntry('app-hash.js')], { compressedSuffixes: ['.br', '.gz'] });
+    await pruneDir(dir, manifestOf(mkEntry('app-hash.js')), { compressedSuffixes: ['.br', '.gz'] });
     expect(await pathExists(join(dir, 'app-hash.js'))).toBe(true);
     expect(await pathExists(join(dir, 'app-hash.js.br'))).toBe(true);
     expect(await pathExists(join(dir, 'old.js'))).toBe(false);
@@ -151,7 +162,7 @@ describe('pruneDir', () => {
     });
     const entry = mkEntry('app-hash.js');
     entry.compressed = { zst: { path: 'app-hash.js.zst', size: 3, sha256: 'abc' } };
-    await pruneDir(dir, [entry]);
+    await pruneDir(dir, manifestOf(entry));
     expect(await pathExists(join(dir, 'app-hash.js.zst'))).toBe(true);
     expect(await pathExists(join(dir, 'old.js'))).toBe(false);
   });
@@ -160,7 +171,7 @@ describe('pruneDir', () => {
     await using tmp = await mkdtempDisposable(join(tmpdir(), 'assetcraft-test-'));
     const dir = tmp.path;
     await writeFiles(dir, { 'sub/deep/stale.js': 'stale' });
-    await pruneDir(dir, [mkEntry('sub/keep.js')], { removeEmptyDirs: true });
+    await pruneDir(dir, manifestOf(mkEntry('sub/keep.js')), { removeEmptyDirs: true });
     expect(await pathExists(join(dir, 'sub'))).toBe(false);
     expect(await pathExists(dir)).toBe(true);
   });
@@ -169,7 +180,7 @@ describe('pruneDir', () => {
     await using tmp = await mkdtempDisposable(join(tmpdir(), 'assetcraft-test-'));
     const dir = tmp.path;
     await writeFiles(dir, { 'sub/deep/stale.js': 'stale' });
-    await pruneDir(dir, [mkEntry('sub/keep.js')]);
+    await pruneDir(dir, manifestOf(mkEntry('sub/keep.js')));
     expect(await pathExists(join(dir, 'sub'))).toBe(true);
   });
 });
